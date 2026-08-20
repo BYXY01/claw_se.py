@@ -1,0 +1,34 @@
+{
+  "firewall": "on",
+  "detect": "auto",
+  "input_detect": "off",
+  "check_ratio": 0.1,
+  "judge_max_retries": 1,
+  "review_on_block": false,
+  "override_threshold": 3,
+  "module_check": "normal",
+  "blacklist_file": "modules/core/security/data/blacklist.json",
+  "whitelist_file": "modules/core/security/data/whitelist.json",
+  "asklist_file": "modules/core/security/data/asklist.json",
+  "overrides_file": "modules/core/security/data/overrides.json",
+  "module_trust_file": "modules/core/security/data/module_trust.json",
+  "default_keywords": [
+    "rm -rf",
+    "format c:",
+    "del /f /s /q",
+    "mkfs",
+    "dd if=/dev/zero",
+    "shutdown",
+    "reboot"
+  ],
+  "injection_features": [
+    "ignore previous instructions",
+    "ignore all previous",
+    "disregard previous instructions",
+    "forget all instructions",
+    "print your system prompt",
+    "reveal your system prompt",
+    "override the system prompt"
+  ],
+  "version": "v1"
+}

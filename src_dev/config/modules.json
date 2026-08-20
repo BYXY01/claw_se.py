@@ -1,0 +1,9 @@
+{
+  "modules": {
+    "exec": true,
+    "file": true,
+    "info": true,
+    "delegate": false,
+    "memory": false
+  }
+}

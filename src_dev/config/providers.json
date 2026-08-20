@@ -1,0 +1,15 @@
+{
+  "providers": {
+    "deepseek": {
+      "api_base": "https://api.deepseek.com/v1",
+      "models": {
+        "main":  { "model": "deepseek-chat", "key_ref": "DEEPSEEK_API_KEY", "ctx": 8192 },
+        "judge": { "model": "deepseek-chat", "key_ref": "DEEPSEEK_API_KEY", "ctx": 8192 }
+      }
+    }
+  },
+  "role_map": {
+    "main": "deepseek.main",
+    "judge": "deepseek.judge"
+  }
+}
