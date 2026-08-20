@@ -28,8 +28,9 @@ def test_builder_produces_single_file(tmp_path):
 def test_builder_excludes_secrets_and_dev_entry(tmp_path):
     payload = builder.collect_payload()
     assert ".env" not in payload
-    assert "claw_se_main.py" not in payload
-    assert "claw_se_entry.py" not in payload
+    assert "claw_se_entry.py" not in payload  # runtime template, injected by builder
+    # no top-level (src_dev-root) entry scripts are shipped
+    assert not any("/" not in rel and rel.endswith(".py") for rel in payload)
     assert "modules/core/boot.py" in payload
     assert "config/security.json" in payload
     assert "prompt_library/IDENTITY.md" in payload

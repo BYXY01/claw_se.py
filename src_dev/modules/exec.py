@@ -162,9 +162,12 @@ def _process_list() -> str:
     return "Processes:\n" + "\n".join(lines)
 
 
+_DEFAULT_RUN_TIMEOUT = 30  # seconds; foreground run must never block forever
+
+
 @tool
 def execute(command: str = "", operation: str = "run", pid: Optional[int] = None,
-            input_text: str = "") -> str:
+            input_text: str = "", timeout: int = _DEFAULT_RUN_TIMEOUT) -> str:
     """Unified executor: run commands or manage background processes.
 
     Args:
@@ -178,6 +181,9 @@ def execute(command: str = "", operation: str = "run", pid: Optional[int] = None
             - 'list': list all background processes
         pid: background process ID (used by 'input'/'stop'/'status').
         input_text: input to send to a background process (used by 'input').
+        timeout: max seconds a foreground 'run' may take (default 30) so it can
+            never block the agent indefinitely. Background 'start' is
+            non-blocking (Popen) and unaffected by this timeout.
 
     Returns:
         Command output or a status/error message.
@@ -189,15 +195,19 @@ def execute(command: str = "", operation: str = "run", pid: Optional[int] = None
             blocked = _check_self_dir(command)
             if blocked:
                 return f"[SE] Blocked (self-directory guard): {blocked}"
-            result = subprocess.run(
-                command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="ignore",
-            )
+            try:
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="ignore",
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                return f"[SE] Command timed out after {timeout}s (blocked to prevent hang)."
             return (result.stdout + result.stderr).strip() or "(no output)"
 
         if operation == "start":

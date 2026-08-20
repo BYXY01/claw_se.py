@@ -23,7 +23,7 @@ _PAYLOAD: dict[str, str] = {}  # <-- builder.py replaces this line with the embe
 _CORE_DEPS = ["langchain", "langchain-openai", "langchain-core", "python-dotenv"]
 _CORE_IMPORTS = ["langchain", "langchain_openai", "langchain_core", "dotenv"]
 
-_BANNER = "Claw_SE (single-file build)"
+_BANNER = "Claw_SE (Small + Security edition, single-file build)"
 
 
 def _release_root() -> Path:

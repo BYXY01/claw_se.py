@@ -21,6 +21,15 @@ def test_exec_run_command(tmp_path, security_config):
     assert "hello-from-sec" in out
 
 
+def test_exec_run_timeout_prevents_hang(tmp_path, security_config):
+    """Foreground run must time out instead of blocking forever."""
+    from modules.exec import execute
+    ctx = make_ctx(security_config, tmp_path)
+    secured = secure_tool(execute, "command", ctx)
+    out = secured.invoke({"operation": "run", "command": "sleep 10", "timeout": 1})
+    assert "timed out" in out
+
+
 def test_exec_blacklisted_blocked(tmp_path, security_config):
     from modules.exec import execute
     ctx = make_ctx(security_config, tmp_path)
