@@ -136,7 +136,7 @@ def task_to_submodel(
 
     _depths[sid] = depth + 1
     try:
-        return factory_mod.ask_model(
+        return factory_mod.delegate_model(
             prompt=_prompt_text(prompt_name),
             input_data=input_data,
             model_id=model_id or None,

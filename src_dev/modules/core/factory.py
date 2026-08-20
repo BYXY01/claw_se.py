@@ -2,7 +2,7 @@
 
 - build_agent(role, model_id, tools, system_prompt, **kw): main / delegate / judge all
   go through this one entry; tools are always wrapped with secure() first.
-- ask_model(...): dynamic sub-model delegation with max_depth guard (fix #5).
+- delegate_model(...): dynamic sub-model delegation with max_depth guard (fix #5).
 - Security is injected at the exit of this seam, so no agent can be created
   bare (`ChatOpenAI()` outside the factory is forbidden).
 
@@ -122,12 +122,12 @@ def build_agent(role: str = "main", model_id: Optional[str] = None, tools: Optio
     return create_agent(model=model, tools=tools, system_prompt=system_prompt, **kwargs)
 
 
-def ask_model(prompt: str = "", input_data: str = "", model_id: Optional[str] = None,
-              full_context_share: bool = True, context_content: Optional[str] = None,
-              tools_to_share: Optional[list] = None, tool_guards: Optional[dict[str, str]] = None,
-              ctx: Optional[SecurityContext] = None, session_id: Optional[str] = None,
-              depth: int = 0, max_depth: int = 2, **model_params) -> str:
-    """Dynamically delegate a task to a sub-model (fix #5: max_depth recursion guard).
+def delegate_model(prompt: str = "", input_data: str = "", model_id: Optional[str] = None,
+                   full_context_share: bool = True, context_content: Optional[str] = None,
+                   tools_to_share: Optional[list] = None, tool_guards: Optional[dict[str, str]] = None,
+                   ctx: Optional[SecurityContext] = None, session_id: Optional[str] = None,
+                   depth: int = 0, max_depth: int = 2, **model_params) -> str:
+    """Dynamically delegate a task to a sub-model and return its reply (fix #5: max_depth guard).
 
     Signature follows A6 task_to_submodel. The sub-agent is created via build_agent,
     so it passes through the factory + secure() (fix #11, no bare ChatOpenAI).

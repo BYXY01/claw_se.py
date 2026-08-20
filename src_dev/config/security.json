@@ -12,23 +12,5 @@
   "asklist_file": "modules/core/security/data/asklist.json",
   "overrides_file": "modules/core/security/data/overrides.json",
   "module_trust_file": "modules/core/security/data/module_trust.json",
-  "default_keywords": [
-    "rm -rf",
-    "format c:",
-    "del /f /s /q",
-    "mkfs",
-    "dd if=/dev/zero",
-    "shutdown",
-    "reboot"
-  ],
-  "injection_features": [
-    "ignore previous instructions",
-    "ignore all previous",
-    "disregard previous instructions",
-    "forget all instructions",
-    "print your system prompt",
-    "reveal your system prompt",
-    "override the system prompt"
-  ],
   "version": "v1"
 }

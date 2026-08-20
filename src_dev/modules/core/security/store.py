@@ -35,6 +35,35 @@ logger = logging.getLogger("Claw_SE.security.store")
 KEYWORD_LISTS = ("blacklist", "self", "learned", "whitelist", "asklist")
 OVERRIDES_LIST = "overrides"
 
+# Known-dangerous command baseline seeded into the static blacklist on FIRST load
+# only. This makes switch A (static firewall, 0 token) effective from the very
+# first run without ever needing the LLM/judge to "learn" these first. Existing
+# blacklist files (user-cleared or grown via self-learning) are never overwritten.
+_DEFAULT_BLACKLIST_KEYWORDS = [
+    "rm -rf",
+    "format c:",
+    "del /f /s /q",
+    "mkfs",
+    "dd if=/dev/zero",
+    "shutdown",
+    "reboot",
+]
+
+# Prompt-injection features: seeded into the SAME blacklist (unified 0-token
+# static list) so both the input layer and the tool layer share one list.
+_DEFAULT_INJECTION_FEATURES = [
+    "ignore previous instructions",
+    "ignore all previous",
+    "disregard previous instructions",
+    "forget all instructions",
+    "ignore everything above",
+    "print your system prompt",
+    "reveal your system prompt",
+    "show your instructions",
+    "disregard all rules",
+    "override the system prompt",
+]
+
 
 class Store:
     """List persistence: memory cache + write-through + RLock + atomic write.
@@ -80,22 +109,32 @@ class Store:
             "overrides": "overrides_file",
         }
         key = mapping.get(name)
-        return self._resolve(key) if key else None
+        # a missing config key means "no dedicated file" -> None (never resolve to a dir)
+        if not key or not self._cfg.get(key):
+            return None
+        return self._resolve(key)
 
     # ---- initial load (one-shot) ----
     def _load_all(self) -> None:
-        # blacklist file: {keywords, self, learned, version}
+        # blacklist file: {keywords, learned, version}. `self` is NOT persisted:
+        # it is re-computed at boot from the single-file dir + the release dir.
         bl = self._read_json_file(self.blacklist_path())
         if isinstance(bl, dict):
             self._data["blacklist"] = list(bl.get("keywords", []))
-            self._data["self"] = list(bl.get("self", []))
             self._data["learned"] = list(bl.get("learned", []))
+        else:
+            # first run: seed the static blacklist with the known-dangerous
+            # baseline + prompt-injection features (one unified 0-token list)
+            self._data["blacklist"] = list(_DEFAULT_BLACKLIST_KEYWORDS) + list(
+                _DEFAULT_INJECTION_FEATURES)
+            self._save_list("blacklist")
         for name in ("whitelist", "asklist", "overrides"):
             path = self._file_for(name)
             if path is None:
                 continue
             arr = self._read_json_file(path)
             self._data[name] = list(arr) if isinstance(arr, list) else []
+
         logger.info("store loaded: blacklist=%d self=%d learned=%d whitelist=%d asklist=%d",
                     len(self._data["blacklist"]), len(self._data["self"]),
                     len(self._data["learned"]), len(self._data["whitelist"]),
@@ -118,11 +157,12 @@ class Store:
         os.replace(tmp, path)
 
     def _save_list(self, name: str) -> None:
-        # blacklist/self/learned all live inside the blacklist file as a combined dict
-        if name in ("blacklist", "self", "learned"):
+        if name == "self":
+            return  # self is runtime-computed at boot, never persisted
+        # blacklist + learned live inside the blacklist file as a combined dict
+        if name in ("blacklist", "learned"):
             payload = {
                 "keywords": self._data["blacklist"],
-                "self": self._data["self"],
                 "learned": self._data["learned"],
                 "version": self._cfg.get("version", "v1"),
             }

@@ -17,6 +17,7 @@ from pathlib import Path
 import modules
 from langchain_core.messages import HumanMessage
 from modules.core import config as core_config
+from modules.core import env
 from modules.core import factory
 from modules.core.msgio import TerminalBackend, get_io
 from modules.core.security import build_stack
@@ -79,8 +80,14 @@ def run() -> None:
 
     ctx, guard = build_stack(security_config, root, judge=judge)
 
-    # self-referential defense (fix #1): script dir + modules dir into self list
-    ctx.store.ensure_self([str(root), str(root / "modules")])
+    # self-referential defense (fix #1): single-file dir + release dir (+ their
+    # modules/). Computed at runtime, kept in memory only (never persisted).
+    entry = Path(sys.argv[0]).resolve()
+    self_dirs = [str(root), str(root / "modules")]
+    if env.IS_BUNDLE or env.IS_FROZEN:
+        edir = entry.parent
+        self_dirs += [str(edir), str(edir / "modules")]
+    ctx.store.ensure_self(list(dict.fromkeys(self_dirs)))
 
     # module discovery (graded security check)
     loaded = modules.discover(security_config)
@@ -108,7 +115,8 @@ def run() -> None:
     io = get_io()
     io.set_input_guard(guard)
     io.register(TerminalBackend())
-    io.send("Claw_SE started (security edition). Type a message, Ctrl+C to exit.")
+    io.send("Claw_SE started (Small + Security edition, single-file). "
+            "Type a message, Ctrl+C to exit.")
 
     messages = []
     while True:

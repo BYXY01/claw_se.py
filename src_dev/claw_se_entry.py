@@ -2,7 +2,7 @@
 
 This file is the runtime template: builder.py replaces the `_PAYLOAD` placeholder
 line below with the full embedded file map and produces the distributed claw_se.py.
-It is not meant to be run inside src_dev/ (use claw_se_main.py there).
+The single file is the ONLY runnable form of the product (no dev entry).
 
 Runtime flow:
 1. self_release(): extract modules/ config/ prompt_library/ to the release root

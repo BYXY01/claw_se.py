@@ -8,6 +8,7 @@ Graded module check (fix #14):
 - hard risks (path escape / malicious features) are ALWAYS intercepted,
   regardless of strict/normal mode.
 """
+import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -73,6 +74,8 @@ def build_stack(security_config: dict, app_root: Path,
 class ModuleTrust:
     """Persistent record of already-validated modules (module_trust.json).
 
+    JSON format: {"trusted": ["exec", "file", ...]}.
+
     Args:
         path: path to the trust file.
     """
@@ -86,9 +89,9 @@ class ModuleTrust:
         if not self._path.exists():
             return
         try:
-            data = self._path.read_text(encoding="utf-8")
-            self._names = set(data.splitlines())
-        except OSError as e:
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+            self._names = set(data.get("trusted", []))
+        except (json.JSONDecodeError, TypeError, OSError) as e:
             logger.warning("failed to read module_trust: %s", e)
 
     def contains(self, name: str) -> bool:
@@ -98,8 +101,9 @@ class ModuleTrust:
         self._names.add(name)
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps({"trusted": sorted(self._names)}, ensure_ascii=False, indent=2)
             tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-            tmp.write_text("\n".join(sorted(self._names)), encoding="utf-8")
+            tmp.write_text(payload, encoding="utf-8")
             tmp.replace(self._path)
         except OSError as e:
             logger.warning("failed to persist module_trust: %s", e)

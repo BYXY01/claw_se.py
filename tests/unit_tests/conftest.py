@@ -41,7 +41,6 @@ def make_security_config(tmp_path: Path) -> dict:
         "asklist_file": str(data_dir / "asklist.json"),
         "overrides_file": str(data_dir / "overrides.json"),
         "module_trust_file": str(data_dir / "module_trust.json"),
-        "default_keywords": ["rm -rf", "format c:"],
         "version": "v1",
     }
 

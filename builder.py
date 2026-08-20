@@ -2,11 +2,11 @@
 
 - Anchors src_dev/ via `__file__` (cwd-independent).
 - Output written to Path.cwd() (respect the user; use --out to override).
-- `python builder.py`            -> claw_se.py (single file)
+- `python builder.py`            -> claw_se.py (single file, the only runnable form)
 - `python builder.py --exe`      -> also build claw_se.exe via PyInstaller (optional)
 
 Never embeds secrets (.env) or runtime data (modules/**/data/). The dev-only
-claw_se_main.py / claw_se_entry.py template are excluded from the payload.
+claw_se_entry.py template is excluded from the payload.
 """
 import argparse
 import json
@@ -22,7 +22,6 @@ _BANNER = "#!/usr/bin/env python3\n# claw_se.py - Claw_SE single-file build (gen
 
 _EXCLUDED_RELS = {
     ".env",                 # secrets, never embedded
-    "claw_se_main.py",      # dev-only entry
     "claw_se_entry.py",     # template used by this builder
 }
 

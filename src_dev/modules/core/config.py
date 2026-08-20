@@ -76,19 +76,6 @@ def load_providers_config(root: Path | None = None) -> dict:
     return _read_json(path, {"providers": {}, "role_map": {}})
 
 
-def _default_keywords() -> list[str]:
-    """Default static blacklist keywords (overridable via config/security.json)."""
-    return [
-        "rm -rf",
-        "format c:",
-        "del /f /s /q",
-        "mkfs",
-        "dd if=/dev/zero",
-        "shutdown",
-        "reboot",
-    ]
-
-
 _SECURITY_DEFAULTS: dict = {
     "firewall": "on",               # switch A: static firewall on/off
     "detect": "auto",               # switch B: tool layer off/auto/full
@@ -102,6 +89,5 @@ _SECURITY_DEFAULTS: dict = {
     "asklist_file": "modules/core/security/data/asklist.json",
     "overrides_file": "modules/core/security/data/overrides.json",
     "module_trust_file": "modules/core/security/data/module_trust.json",
-    "default_keywords": _default_keywords(),
     "version": "v1",
 }
