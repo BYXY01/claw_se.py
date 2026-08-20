@@ -15,3 +15,12 @@ __pycache__/
 
 # --- Logs ---
 logs/
+
+# --- Delivery note (working document, kept out of the repo) ---
+DELIVERY*.md
+
+# --- Build artifacts (never committed; products go to GitHub Release) ---
+claw_se.py
+build/
+dist/
+*.spec

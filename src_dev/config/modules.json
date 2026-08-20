@@ -3,7 +3,7 @@
     "exec": true,
     "file": true,
     "info": true,
-    "delegate": false,
+    "delegate": true,
     "memory": false
   }
 }

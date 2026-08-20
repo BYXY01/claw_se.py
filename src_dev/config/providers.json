@@ -10,6 +10,7 @@
   },
   "role_map": {
     "main": "deepseek.main",
-    "judge": "deepseek.judge"
+    "judge": "deepseek.judge",
+    "delegate": "deepseek.main"
   }
 }

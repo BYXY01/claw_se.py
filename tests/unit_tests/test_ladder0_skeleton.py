@@ -87,9 +87,8 @@ def test_discover_loads_enabled_modules(tmp_path, security_config):
     security_config["module_trust_file"] = str(tmp_path / "module_trust.json")
     loaded = __import__("modules").discover(security_config)
     names = set(loaded.keys())
-    assert {"exec", "file", "info"} <= names
-    assert "delegate" not in names  # disabled
-    assert "memory" not in names  # disabled
+    assert {"exec", "file", "info", "delegate"} <= names
+    assert "memory" not in names  # disabled (opt-in per design decision Q5)
 
 
 def test_collect_tools_and_guard_map(tmp_path, security_config):
