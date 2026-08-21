@@ -2,7 +2,7 @@
 
 **claw_se（Small + Security 版）**——一个单文件、安全优先的个人 AI 助理。名字是双关：**S**mall（单文件、极简体积）+ **S**ecurity（每个动作都过安全内核）。
 
-[![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://gitee.com/baiyun_xy001/claw_se.py) [![status](https://img.shields.io/badge/status-experimental-orange)](https://gitee.com/baiyun_xy001/claw_se.py) [![version](https://img.shields.io/badge/version-0.0.102--%CE%B1-blue)](https://gitee.com/baiyun_xy001/claw_se.py) [![license](https://img.shields.io/badge/license-planned-lightgrey)](https://gitee.com/baiyun_xy001/claw_se.py)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://gitee.com/baiyun_xy001/claw_se.py) [![status](https://img.shields.io/badge/status-experimental-orange)](https://gitee.com/baiyun_xy001/claw_se.py) [![version](https://img.shields.io/badge/version-0.0.103--%CE%B1-blue)](https://gitee.com/baiyun_xy001/claw_se.py) [![license](https://img.shields.io/badge/license-planned-lightgrey)](https://gitee.com/baiyun_xy001/claw_se.py)
 
 ---
 
@@ -19,7 +19,7 @@ Claw 系列有一个共同的起源：26 年初 [OpenClaw](https://gitee.com/ope
 
 ## 介绍
 
-当前这是 **0.0.102-α**。SE = Small + Security（也是 Simple / Smart / Shield）。
+当前这是 **0.0.103-α**。SE = Small + Security（也是 Simple / Smart / Shield）。
 
 特性：
 
@@ -60,7 +60,8 @@ python3 -m pyflakes src_dev tests builder.py
 - **0.0.100**——单文件版本化、无状态 file 工具、psutil 进程树 kill。
 - **0.0.101**——msgio 多通道、确定性进程树 kill、Windows 必须 exe、GitHub CI + 自动发布。
 - **0.0.102**——安装型插件加载器（manifest + 门面 + 分级校验）、requirements.txt 作为依赖单一事实源、实验性 unix 二进制参数、Gitee 自动化。
-- **路线图**——多通道（已完成）→ 插件加载器（已完成）→ 真实渠道 + 供应商故障转移 → [OpenClaw](https://gitee.com/openclaw-cn/openclaw-cn) 桥 → 会话内记忆。
+- **0.0.103**——模型故障转移（每供应商重试一次再切换）、供应商插件过 factory 缝、中立 HTTP 长轮询渠道插件、release 出 unix 二进制、OpenClaw 式提示词（身份/用户可改须告知）+ 首次启动欢迎 + 可选心跳、自指防御扩展到 modules/core 与 config/*.json。
+- **路线图**——多通道（已完成）→ 插件加载器（已完成）→ 真实渠道 + 供应商故障转移（已完成） → [OpenClaw](https://gitee.com/openclaw-cn/openclaw-cn) 桥 → 会话内记忆。
 
 ---
 

@@ -30,6 +30,25 @@ def test_exec_run_timeout_prevents_hang(tmp_path, security_config):
     assert "timed out" in out
 
 
+def test_exec_run_timeout_kills_whole_tree(tmp_path, security_config):
+    """A timed-out foreground run must kill the whole shell tree, not orphan it
+    (an orphaned child would keep the console stdin and hang the terminal)."""
+    import os
+    import subprocess as _sp
+    import time
+    from modules.exec import execute
+    if os.name == "nt":
+        return
+    ctx = make_ctx(security_config, tmp_path)
+    secured = secure_tool(execute, "command", ctx)
+    unique = "sleep 12345 & sleep 12346"
+    out = secured.invoke({"operation": "run", "command": unique, "timeout": 1})
+    assert "timed out" in out
+    time.sleep(0.5)
+    leftover = _sp.run(["pgrep", "-f", "sleep 12345"], capture_output=True, text=True).stdout.split()
+    assert leftover == [], f"orphaned sleeps after timeout: {leftover}"
+
+
 def test_exec_blacklisted_blocked(tmp_path, security_config):
     from modules.exec import execute
     ctx = make_ctx(security_config, tmp_path)

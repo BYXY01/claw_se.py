@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pytest pyinstaller
 
       - name: Read version
         id: version
@@ -33,6 +33,9 @@ jobs:
 
       - name: Build single-file distribution
         run: python builder.py --out dist
+
+      - name: Build unix binary (Linux)
+        run: python builder.py --unix-bin --out dist
 
       - name: Run unit tests (offline)
         run: python -m pytest tests/unit_tests -q
@@ -42,6 +45,12 @@ jobs:
         with:
           name: claw_se.py
           path: dist/claw_se.py
+
+      - name: Upload unix binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: claw_se-unix
+          path: dist/claw_se
 
   exe:
     name: Build claw_se.exe (Windows)
@@ -93,6 +102,7 @@ jobs:
             Auto-built by GitHub Actions.
 
             - `claw_se.py` - single-file Python distribution (all platforms)
+            - `claw_se` - native Linux binary (PyInstaller onefile)
             - `claw_se.exe` - Windows onefile build (PyInstaller)
           files: release-assets/*
           fail_on_unmatched_files: true

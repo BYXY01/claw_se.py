@@ -72,14 +72,20 @@ def _release_root() -> Path:
 def _refuse(reason: str) -> None:
     print(f"[SE] {_BANNER}: {reason}")
     sys.exit(1)
-def self_release(root: Path, reset_core: bool = False) -> Path:
+def self_release(root: Path, reset_core: bool = False, force_py: bool = False) -> Path:
     """Extract the embedded modules/config/prompt_library to the release root.
     - A stripped/empty payload refuses to start.
     - Existing files are NEVER overwritten (modules/config/prompts are all user
       editable by design); --reset-core deletes and re-releases only modules/core.
+    - force_py is the transitional MANUAL override (--resync): it force-overwrites
+      every embedded .py module file so the released code matches this single file.
+      Non-.py payload entries (config examples, prompt_library) stay untouched, as
+      does anything outside the payload (data/, user .env). The planned automated
+      update mechanism will later enforce the same .py-only overwrite policy.
     Args:
         root: release target directory.
         reset_core: re-release a corrupted core (delete + rewrite modules/core only).
+        force_py: force-overwrite all embedded .py files (manual resync override).
     Returns:
         The release root.
     """
@@ -97,7 +103,7 @@ def self_release(root: Path, reset_core: bool = False) -> Path:
         if reset_core and not rel.startswith("modules/core/"):
             continue
         target = root / rel
-        if target.exists() and not reset_core:
+        if target.exists() and not reset_core and not (force_py and rel.endswith(".py")):
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
@@ -161,18 +167,30 @@ def _ensure_genuine_run(modules_mod) -> None:
     if inside_src_dev:
         _refuse("refusing to run the main loop against the development source tree. "
                 "Build the single file first: python builder.py, then run claw_se.py.")
-def _load_system_prompt(root: Path) -> str:
-    """Compose the system prompt from prompt_library (IDENTITY + RULES).
+def _load_system_prompt(root: Path, *, with_bootstrap: bool = False) -> str:
+    """Compose the system prompt from prompt_library (IDENTITY + USER + RULES).
+
+    The first run ALSO feeds BOOTSTRAP.md to the MODEL (never shown to the user -
+    the startup guidance is context, not a greeting dumped on the screen).
+
     Args:
         root: the release root.
+        with_bootstrap: include BOOTSTRAP.md (first-run ritual) in the prompt.
+
     Returns:
         The system prompt string.
     """
     parts: list[str] = []
-    for name in ("IDENTITY", "RULES"):
+    for name in ("IDENTITY", "USER", "RULES"):
         p = root / "prompt_library" / f"{name}.md"
         if p.exists():
             content = p.read_text(encoding="utf-8").strip()
+            if content:
+                parts.append(content)
+    if with_bootstrap:
+        bp = root / "prompt_library" / "BOOTSTRAP.md"
+        if bp.exists():
+            content = bp.read_text(encoding="utf-8").strip()
             if content:
                 parts.append(content)
     return "\n\n".join(parts) if parts else _FALLBACK_PROMPT
@@ -181,6 +199,44 @@ def _detection_needs_judge(security_config: dict) -> bool:
     detect = str(security_config.get("detect", "auto")).lower()
     input_detect = str(security_config.get("input_detect", "off")).lower()
     return detect != "off" or input_detect == "full" or input_detect.startswith("random:")
+def _build_agent(factory, checkpointer, root: Path, tools, guard_map, ctx,
+                 *, with_bootstrap: bool = False):
+    """Build the main agent from the current prompt files (auto-reload hook).
+
+    Reuses the SAME checkpointer so conversation memory survives a prompt reload.
+    The first run also feeds BOOTSTRAP.md to the model (never shown to the user).
+
+    Args:
+        with_bootstrap: include the first-run BOOTSTRAP.md in the system prompt.
+    """
+    system_prompt = _load_system_prompt(root, with_bootstrap=with_bootstrap)
+    return factory.build_agent(
+        role="main", tools=tools, tool_guards=guard_map,
+        system_prompt=system_prompt, ctx=ctx,
+        checkpointer=checkpointer,
+        summarize={"trigger": ("fraction", 0.7), "keep": ("messages", 20)},
+    )
+
+
+def _prompt_sig(prompt_files) -> tuple:
+    """Signature of the prompt files (mtime + size); a change means a reload is due.
+
+    Args:
+        prompt_files: prompt_library file paths composing the system prompt.
+
+    Returns:
+        A tuple of per-file (mtime_ns, size) or None when a file is missing.
+    """
+    sig = []
+    for p in prompt_files:
+        try:
+            st = p.stat()
+            sig.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            sig.append(None)
+    return tuple(sig)
+
+
 def _boot(root: Path) -> None:
     """The main loop, embedded in this single file only (imports happen after release)."""
     import logging
@@ -191,10 +247,18 @@ def _boot(root: Path) -> None:
     from modules.core import config as core_config
     from modules.core import env
     from modules.core import factory
-    from modules.core.msgio import TerminalBackend, get_io
+    from modules.core.msgio import TerminalBackend, get_msg_io
     from modules.core.security import build_stack
     logger = logging.getLogger("claw_se.boot")
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    debug = "--debug" in sys.argv
+    # Default: silent (no log noise). --debug: logs to the terminal (stderr), but
+    # the terminal channel's own conversation is never logged - other channels'
+    # traffic is, so remote-channel activity stays debuggable.
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.CRITICAL,
+        format="%(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
     _v = getattr(sys.modules.get("__main__"), "version", "unknown")
     logger.info("claw_se version: %s", _v)
     _ensure_genuine_run(modules)
@@ -218,57 +282,83 @@ def _boot(root: Path) -> None:
     tools = modules.collect_tools(loaded)
     guard_map = modules.collect_guard_map(loaded)
     modules.wire_plugin_channels()
+    modules.wire_plugin_providers()
     logger.info("loaded modules: %s", ", ".join(loaded.keys()))
     logger.info("registered tools: %s", ", ".join(getattr(t, "name", str(t)) for t in tools))
     if "delegate" in loaded:
         from modules import delegate as delegate_mod
         delegate_mod.configure(ctx, all_tools=tools, tool_guards=guard_map)
-    system_prompt = _load_system_prompt(root)
+    checkpointer = InMemorySaver()
+    prompt_files = [root / "prompt_library" / name for name in ("IDENTITY", "USER", "RULES")]
+    first_run = not (root / ".bootstrapped").exists()
+    if first_run:
+        try:
+            (root / ".bootstrapped").write_text("seen", encoding="utf-8")
+        except OSError:
+            pass
     try:
-        agent = factory.build_agent(
-            role="main", tools=tools, tool_guards=guard_map,
-            system_prompt=system_prompt, ctx=ctx,
-            checkpointer=InMemorySaver(),
-            summarize={"trigger": ("fraction", 0.7), "keep": ("messages", 20)},
-        )
+        agent = _build_agent(factory, checkpointer, root, tools, guard_map, ctx,
+                             with_bootstrap=first_run)
     except KeyError as e:
         print(f"Error: cannot resolve the main model ({e}). Copy config/providers.example.json to config/providers.json and set your key in .env.")
         sys.exit(1)
-    io = get_io()
-    io.set_input_guard(guard)
-    io.register(TerminalBackend())
-    io.send("claw_se started (Small + Security edition, single-file). "
-            "Type a message, Ctrl+C to exit.")
+    msg_io = get_msg_io()
+    msg_io.set_input_guard(guard)
+    msg_io.register(TerminalBackend())
+    msg_io.send("claw_se started (Small + Security edition, single-file). "
+                "Type a message, Ctrl+C to exit.")
+    heartbeat = None
+    heartbeat_cfg = security_config.get("heartbeat") or {}
+    if heartbeat_cfg.get("every"):
+        from modules.core.heartbeat import Heartbeat
+        heartbeat = Heartbeat(
+            float(heartbeat_cfg["every"]),
+            heartbeat_cfg.get("prompt", "Heartbeat: check whether anything needs attention; if nothing, reply HEARTBEAT_OK."))
     thread_id = {"configurable": {"thread_id": "main"}}
+    prompt_sig = _prompt_sig(prompt_files)
     while True:
         try:
-            msg = io.receive()
-            if msg is None:
-                time.sleep(0.1)  # no input on any channel: rest, don't spin
+            msg = msg_io.receive()
+            heartbeat_prompt = heartbeat.due() if heartbeat is not None else None
+            if msg is None and heartbeat_prompt is None:
+                time.sleep(0.1)  # nothing to do: rest, don't spin
                 continue
-            user_input = msg.text
-            channel = msg.channel
-            logger.info("User: %s", user_input.replace("\n", "\\n"))
-            io.send("\nAI: ", channel=channel)
-            io.set_current_channel(channel)
+            if msg is not None:
+                user_input = msg.text
+                channel = msg.channel
+                reply = True
+            else:
+                user_input = heartbeat_prompt
+                channel = "heartbeat"
+                reply = False
+            if debug and channel != "terminal":
+                logger.info("User[%s]: %s", channel, user_input.replace("\n", "\\n"))
+            msg_io.set_current_channel(channel)
             try:
+                sig = _prompt_sig(prompt_files)
+                if sig != prompt_sig:
+                    prompt_sig = sig
+                    agent = _build_agent(factory, checkpointer, root, tools, guard_map, ctx)
+                    logger.info("reloaded system prompt after prompt_library change")
                 response = agent.invoke(
                     {"messages": [HumanMessage(content=user_input)]}, config=thread_id)
             finally:
-                io.set_current_channel(None)
+                msg_io.set_current_channel(None)
             ai_response = response["messages"][-1].content if isinstance(response, dict) else str(response)
-            io.send(ai_response if isinstance(ai_response, str) else str(ai_response), channel=channel)
-            io.send("", channel=channel)
-            logger.info("AI: %s", str(ai_response).replace("\n", "\\n"))
+            if reply:
+                msg_io.send(ai_response if isinstance(ai_response, str) else str(ai_response), channel=channel)
+            elif debug:
+                logger.info("AI (heartbeat): %s", str(ai_response).replace("\n", "\\n"))
         except KeyboardInterrupt:
-            io.send("\nExited.")
+            msg_io.send("Exited.")
             break
         except Exception as e:
-            io.send(f"\nError: {e}")
+            msg_io.send(f"Error: {e}")
 def main() -> None:
     """Entry: release, ensure deps, then run the embedded main loop."""
     reset_core = "--reset-core" in sys.argv
-    root = self_release(_release_root(), reset_core=reset_core)
+    force_py = "--resync" in sys.argv
+    root = self_release(_release_root(), reset_core=reset_core, force_py=force_py)
     sys.path.insert(0, str(root))
     ensure_deps()
     _boot(root)

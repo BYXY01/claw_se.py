@@ -25,7 +25,7 @@ from typing import Optional
 from langchain_core.tools import StructuredTool
 
 from ..interaction.base import get_interaction
-from ..msgio import get_io
+from ..msgio import get_msg_io
 from . import rules as rules_mod
 from . import store as store_mod
 from .judge import SafetyJudge
@@ -137,7 +137,7 @@ def _ask_user(ctx: SecurityContext, value: str, execute, *args, **kwargs) -> str
     """Four-choice interaction: whitelist / allow-once / deny-once / blacklist."""
     interaction = get_interaction()
     options = _REVIEW_OPTIONS if ctx.config.review_on_block else _ASK_OPTIONS
-    channel = get_io().current_channel or ""
+    channel = get_msg_io().current_channel or ""
     choice = interaction.ask_four(f"Command [{value}] needs your decision:", options, channel=channel)
 
     if choice == "add to whitelist":

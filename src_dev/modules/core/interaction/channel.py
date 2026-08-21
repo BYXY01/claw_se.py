@@ -9,7 +9,7 @@ provider.
 """
 import time
 
-from ..msgio import get_io
+from ..msgio import get_msg_io
 from .base import InteractionProvider
 from .terminal import TerminalProvider
 
@@ -33,12 +33,12 @@ class ChannelInteraction(InteractionProvider):
         """
         if not channel:
             return self._terminal.ask_four(question, options)
-        io = get_io()
-        io.send(question, channel=channel)
+        msg_io = get_msg_io()
+        msg_io.send(question, channel=channel)
         for i, opt in enumerate(options, 1):
-            io.send(f"  [{i}] {opt}", channel=channel)
+            msg_io.send(f"  [{i}] {opt}", channel=channel)
         while True:
-            msg = io.poll_channel(channel)
+            msg = msg_io.poll_channel(channel)
             if msg is None:
                 time.sleep(0.1)
                 continue
@@ -48,7 +48,7 @@ class ChannelInteraction(InteractionProvider):
                     return options[idx - 1]
             except ValueError:
                 pass
-            io.send("Invalid choice, try again", channel=channel)
+            msg_io.send("Invalid choice, try again", channel=channel)
 
     def notify(self, content: str, target: str = "", *, channel: str = "") -> str:
         """Send a notification, routed to a channel.
@@ -63,6 +63,6 @@ class ChannelInteraction(InteractionProvider):
         """
         if not channel:
             return self._terminal.notify(content, target)
-        io = get_io()
-        io.send(f"[{target or channel}] {content}", channel=channel)
+        msg_io = get_msg_io()
+        msg_io.send(f"[{target or channel}] {content}", channel=channel)
         return content

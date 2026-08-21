@@ -2,7 +2,7 @@
 
 **claw_se (Small + Security edition)** — a single-file, security-first personal AI assistant. The name is a pun: **S**mall (single file, minimal footprint) and **S**ecurity (every action passes a security kernel).
 
-[![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/BYXY01/test_agent_1) [![status](https://img.shields.io/badge/status-experimental-orange)](https://github.com/BYXY01/test_agent_1) [![version](https://img.shields.io/badge/version-0.0.102--%CE%B1-blue)](https://github.com/BYXY01/test_agent_1) [![license](https://img.shields.io/badge/license-planned-lightgrey)](https://github.com/BYXY01/test_agent_1)
+[![python](https://img.shields.io/badge/python-3.10%2B-blue)](https://github.com/BYXY01/test_agent_1) [![status](https://img.shields.io/badge/status-experimental-orange)](https://github.com/BYXY01/test_agent_1) [![version](https://img.shields.io/badge/version-0.0.103--%CE%B1-blue)](https://github.com/BYXY01/test_agent_1) [![license](https://img.shields.io/badge/license-planned-lightgrey)](https://github.com/BYXY01/test_agent_1)
 
 ---
 
@@ -19,7 +19,7 @@ The very first prototype was only **37 lines** (30 after blank lines): swapping 
 
 ## Introduction
 
-This is **0.0.102-α**. SE = Small + Security (also Simple / Smart / Shield).
+This is **0.0.103-α**. SE = Small + Security (also Simple / Smart / Shield).
 
 Highlights:
 
@@ -61,7 +61,8 @@ Configuration: `config/providers.json` (copy from `src_dev/config/providers.exam
 - **0.0.100** — single-file versioning, stateless `file` tool, psutil process-tree kill.
 - **0.0.101** — msgio multi-channel, deterministic process-tree kill, Windows-must-run-exe guard, GitHub CI + auto-release.
 - **0.0.102** — install-style plugin loader (manifest + facade + graded checks), requirements.txt as the single dependency source, experimental unix binary flag, Gitee automation.
-- **Roadmap** — multi-channel (done) → plugin loader (done) → real channels + provider failover → [OpenClaw](https://github.com/openclaw/openclaw) bridge → in-session memory.
+- **0.0.103** — model failover (retry-once per provider, then switch), provider plugins via the factory seam, neutral HTTP long-poll channel plugin, unix binary in the release, OpenClaw-inspired prompts (editable identity/user with consent) + first-launch welcome + opt-in heartbeat, self-defense now covers modules/core and config/*.json.
+- **Roadmap** — multi-channel (done) → plugin loader (done) → real channels + provider failover (done) → [OpenClaw](https://github.com/openclaw/openclaw) bridge → in-session memory.
 
 ---
 

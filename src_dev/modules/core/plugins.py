@@ -184,6 +184,21 @@ class PluginAPI:
         """Register a message channel backend (Kind.CHANNEL)."""
         self._channels.append(backend)
 
+    def make_msg(self, text: str):
+        """Wrap inbound text into a bus message tagged with this plugin's channel.
+
+        Lets a channel plugin produce bus messages without importing the kernel
+        (the Msg construction happens here, inside the facade).
+
+        Args:
+            text: the raw inbound text.
+
+        Returns:
+            A Msg carrying this plugin's id as the channel name.
+        """
+        from .msgio import Msg
+        return Msg(channel=self._plugin_id, text=text)
+
     def register_hook(self, name: str, hook) -> None:
         """Register a lifecycle/event hook (Kind.HOOK).
 

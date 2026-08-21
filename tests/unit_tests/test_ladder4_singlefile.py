@@ -78,6 +78,37 @@ def test_single_file_reset_core_only(tmp_path):
     assert user_file.read_text(encoding="utf-8") == "# user\n"  # user data untouched
 
 
+def test_single_file_resync_overwrites_py_only(tmp_path):
+    """--resync (force_py) is the transitional manual override: it force-overwrites
+    ALL embedded .py files so released code matches the single file, while config
+    examples / prompt_library / anything non-.py stay untouched."""
+    c = _import_built(tmp_path)
+    release_root = tmp_path / "home_resync"
+    c.self_release(release_root)
+    exec_py = release_root / "modules" / "exec.py"
+    exec_py.write_text("# user tweak\n", encoding="utf-8")
+    id_md = release_root / "prompt_library" / "IDENTITY.md"
+    id_md.write_text("# user edited\n", encoding="utf-8")
+    prov_cfg = release_root / "config" / "providers.example.json"
+    prov_cfg.write_text("{}", encoding="utf-8")
+    c.self_release(release_root, force_py=True)
+    assert exec_py.read_text(encoding="utf-8") != "# user tweak\n"  # .py restored
+    assert "# user edited\n" in id_md.read_text(encoding="utf-8")  # prompts untouched
+    assert prov_cfg.read_text(encoding="utf-8") == "{}"  # config example untouched
+
+
+def test_single_file_resync_without_flag_keeps_edits(tmp_path):
+    """Regression guard: without force_py, a user module edit is still NOT
+    overwritten (the default open/editable design is preserved)."""
+    c = _import_built(tmp_path)
+    release_root = tmp_path / "home_resync2"
+    c.self_release(release_root)
+    exec_py = release_root / "modules" / "exec.py"
+    exec_py.write_text("# user tweak\n", encoding="utf-8")
+    c.self_release(release_root)
+    assert exec_py.read_text(encoding="utf-8") == "# user tweak\n"
+
+
 def test_single_file_refuses_stripped_payload(tmp_path):
     c = _import_built(tmp_path)
     c._PAYLOAD = {}

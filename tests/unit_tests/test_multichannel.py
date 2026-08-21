@@ -5,7 +5,7 @@ import threading
 import time
 
 from modules.core.interaction.channel import ChannelInteraction
-from modules.core.msgio import Msg, MsgBackend, MsgIO, TerminalBackend, get_io
+from modules.core.msgio import Msg, MsgBackend, MsgIO, TerminalBackend, get_msg_io
 
 
 class BlockingBackend(MsgBackend):
@@ -54,11 +54,11 @@ class LoopbackBackend(MsgBackend):
         self._inbox.put(Msg(channel=self.name, text=text))
 
 
-def _wait_for(io: MsgIO, timeout: float = 2.0):
-    """Poll io.receive() until a message arrives (bridge delivery is async)."""
+def _wait_for(msg_io: MsgIO, timeout: float = 2.0):
+    """Poll msg_io.receive() until a message arrives (bridge delivery is async)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        msg = io.receive()
+        msg = msg_io.receive()
         if msg is not None:
             return msg
         time.sleep(0.02)
@@ -68,47 +68,47 @@ def _wait_for(io: MsgIO, timeout: float = 2.0):
 def test_blocking_backend_is_thread_bridged():
     """A blocking backend's message reaches receive() without blocking the bus."""
     MsgIO.reset_io()
-    io = get_io()
+    msg_io = get_msg_io()
     backend = BlockingBackend()
-    io.register(backend)
+    msg_io.register(backend)
     backend.push("hello from blocking")
-    msg = _wait_for(io)
+    msg = _wait_for(msg_io)
     assert msg is not None
     assert msg.text == "hello from blocking"
     assert msg.channel == "blocking"
-    io.send("reply", channel="blocking")
+    msg_io.send("reply", channel="blocking")
     assert backend._outbox[-1] == "reply"
-    io.close()
+    msg_io.close()
 
 
 def test_multichannel_terminal_plus_loopback_nonblocking():
     """Terminal (blocking, bridged) + loopback (non-blocking) coexist; both
     directions work and receive() never blocks on the terminal."""
     MsgIO.reset_io()
-    io = get_io()
+    msg_io = get_msg_io()
     loop = LoopbackBackend()
-    io.register(TerminalBackend())
-    io.register(loop)
-    assert set(io.channels) == {"terminal", "loopback"}
+    msg_io.register(TerminalBackend())
+    msg_io.register(loop)
+    assert set(msg_io.channels) == {"terminal", "loopback"}
     loop.push("hi from loopback")
-    msg = _wait_for(io)
+    msg = _wait_for(msg_io)
     assert msg is not None
     assert msg.channel == "loopback"
     assert msg.text == "hi from loopback"
-    io.send("direct reply", channel="loopback")
+    msg_io.send("direct reply", channel="loopback")
     assert loop._sent[-1] == "direct reply"
     # broadcast reaches the non-blocking channel too
-    io.send("broadcast")
+    msg_io.send("broadcast")
     assert any("broadcast" in s for s in loop._sent)
-    io.close()
+    msg_io.close()
 
 
 def test_interaction_routes_by_channel():
     """ask_four/notify route to the named channel, not the terminal."""
     MsgIO.reset_io()
-    io = get_io()
+    msg_io = get_msg_io()
     loop = LoopbackBackend()
-    io.register(loop)
+    msg_io.register(loop)
     provider = ChannelInteraction()
 
     def answer() -> None:

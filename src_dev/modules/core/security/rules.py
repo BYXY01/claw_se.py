@@ -2,10 +2,13 @@
 
 - classify(text) returns BLOCK / ALLOW / ASK / UNKNOWN; priority black > white > ask > unknown.
 - Blacklist includes self-referential features (script dir / own files injected at startup, fix #1).
-- Self-directory guard (fix #13): self_dir_match() hard-blocks any target that points
-  at a `.py` under `modules/` / `src_dev/` — the execution-level fallback of the
-  self-referential defense, so the agent cannot tamper with its own module sources
-  even when the blacklist does not match.
+- Self-directory guard (fix #13): self_dir_match() hard-blocks any target that points at
+  agent-owned, never-writable content:
+    - any `.py` under `modules/` / `src_dev/` (the agent's own code);
+    - the whole `modules/core/` directory (security kernel + its data/lists);
+    - any `config/*.json` (security / module / provider switches).
+  Deliberately editable (NOT protected): `prompt_library/**` (identity/user .md,
+  changeable with user consent) and `modules/*/data/**` (runtime module data).
 """
 import logging
 import re
@@ -23,10 +26,10 @@ UNKNOWN = "unknown"
 
 
 def self_dir_match(target: str, protected_dirs: list[Path]) -> Optional[str]:
-    """Check whether a target points at a `.py` under one of the protected dirs.
+    """Check whether a target points at agent-owned, never-writable content.
 
     Matches both absolute paths and relative fragments inside command strings
-    (e.g. `rm modules/core/__init__.py`, `echo x > src_dev/modules/exec.py`).
+    (e.g. `rm modules/core/__init__.py`, `echo x > config/security.json`).
 
     Args:
         target: target string (file path or command string).
@@ -37,49 +40,92 @@ def self_dir_match(target: str, protected_dirs: list[Path]) -> Optional[str]:
     """
     if not target:
         return None
-    for protected in protected_dirs:
-        protected = Path(protected).resolve()
-        # 1) absolute / normalized path: target itself is a protected `.py`
-        try:
-            resolved = Path(target.split()[0]).expanduser().resolve()
-        except (OSError, ValueError):
-            resolved = None
-        if resolved is not None and _is_protected_py(resolved, protected):
-            return str(resolved)
-        # 2) command string contains "<protected-dir>/...xxx.py"
-        escaped = re.escape(str(protected))
-        pattern = re.compile(rf"{escaped}[^\s'\"]*\.py\b")
-        m = pattern.search(target)
-        if m:
-            return m.group(0)
-        # 3) relative fragments (modules/xxx.py or src_dev/xxx.py)
-        base_names = {protected.name, "src_dev", "modules"}
-        for base in base_names:
-            frag = re.compile(rf"{re.escape(base)}[\\/][^\s'\"]*\.py\b")
-            m = frag.search(target)
-            if m:
+    protected = [Path(p).resolve() for p in protected_dirs]
+    modules_root = protected[0]
+    app_root = protected[1] if len(protected) > 1 else protected[0].parent
+
+    # 1) absolute / normalized path
+    try:
+        resolved = Path(target.split()[0]).expanduser().resolve()
+    except (OSError, ValueError):
+        resolved = None
+    if resolved is not None and _is_self_defense(str(resolved), modules_root, app_root):
+        return str(resolved)
+
+    # 2) command string / relative fragments
+    patterns = [
+        rf"{re.escape(str(modules_root))}[^\s'\"]+",   # absolute <modules-root>/...
+        rf"{re.escape(str(app_root))}[^\s'\"]+",       # absolute <app-root>/...
+        r"modules[\\/]core[^\s'\"]*",                  # modules/core/... (whole dir)
+        r"modules[\\/][^\s'\"]*\.py\b",                # modules/*.py
+        r"config[\\/][^\s'\"]*\.json\b",               # config/*.json
+        r"src_dev[\\/][^\s'\"]*\.py\b",                # src_dev/*.py
+        r"[^\s'\"]*\.env(?:[.][^\s'\"]*)?",            # any token containing .env
+    ]
+    for pat in patterns:
+        for m in re.finditer(pat, target):
+            if _is_self_defense(m.group(0), modules_root, app_root):
                 return m.group(0)
     return None
 
 
-def _is_protected_py(path: Path, protected: Path) -> bool:
+def _is_self_defense(fragment: str, modules_root: Path, app_root: Path) -> bool:
+    """Decide whether a path fragment is agent-owned, never-writable content.
+
+    Args:
+        fragment: a path fragment (absolute or relative) from a target string.
+        modules_root: the modules/ directory.
+        app_root: the dev body root.
+
+    Returns:
+        True when the fragment is protected (code / security kernel / config json).
+    """
+    fragment = fragment.strip().strip("'\"")
+    normalized = fragment.replace("\\", "/")
+    # any `.env` / `.env.*` file anywhere - secrets live there, never readable or
+    # writable by the agent regardless of which directory it sits in
+    env_name = normalized.rstrip("/").rsplit("/", 1)[-1]
+    if env_name == ".env" or env_name.startswith(".env."):
+        return True
+    # whole security kernel dir: modules/core/<anything>
+    if re.match(r"^(.*/)?modules/core(/|$)", normalized):
+        return True
+    # config/*.json
+    if re.match(r"^(.*/)?config/[^/]+\.json$", normalized):
+        return True
+    # any .py under modules/ or the dev root
+    if re.match(r"^(.*/)?(modules|src_dev)(/|$)", normalized) and normalized.endswith(".py"):
+        return True
+    # absolute resolved-path fallback (for fragments that resolve to a real path)
     try:
-        path.resolve().relative_to(protected)
+        path = Path(fragment).expanduser().resolve()
+        rel = path.relative_to(modules_root)
+        if rel.parts and rel.parts[0] == "core":
+            return True
+        if path.suffix == ".py":
+            return True
     except ValueError:
-        return False
-    return path.suffix == ".py"
+        pass
+    try:
+        path = Path(fragment).expanduser().resolve()
+        path.relative_to(app_root / "config")
+        if path.suffix == ".json":
+            return True
+    except ValueError:
+        pass
+    return False
 
 
 def is_protected_path(path: Path, protected_dirs: list[Path]) -> bool:
-    """Directly decide whether a path is a protected `.py` (for exec/file modules)."""
+    """Directly decide whether a path is protected (for exec/file modules)."""
     try:
         resolved = path.expanduser().resolve()
     except (OSError, ValueError):
         return False
-    for protected in protected_dirs:
-        if _is_protected_py(resolved, Path(protected)):
-            return True
-    return False
+    protected = [Path(p).resolve() for p in protected_dirs]
+    modules_root = protected[0]
+    app_root = protected[1] if len(protected) > 1 else protected[0].parent
+    return _is_self_defense(str(resolved), modules_root, app_root)
 
 
 class Rules:

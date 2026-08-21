@@ -4,7 +4,7 @@ Core idea: every message in the program travels through the same MsgIO bus
 instead of touching stdin/stdout/network directly. Different channels
 (terminal, web, IM, ...) implement MsgBackend and register with the bus.
 
-- MsgIO is a global singleton (get_io()) so every module shares one message port.
+- MsgIO is a global singleton (get_msg_io()) so every module shares one message port.
 - send() broadcasts to all registered channels (or targets one by name).
 - receive() polls all channels and returns a Msg carrying its channel - it never
   blocks: blocking backends are bridged by a worker thread into a queue,
@@ -95,15 +95,19 @@ class MsgBackend(ABC):
 
 
 class TerminalBackend(MsgBackend):
-    """Terminal channel: stdin/stdout (blocking receive, thread-bridged)."""
+    """Terminal channel: stdin/stdout (blocking receive, thread-bridged).
+
+    The input line has no prompt (empty), and every assistant utterance is sent
+    with a "claw_se:\n" marker so user input and AI output are visually distinct.
+    """
 
     name = "terminal"
 
-    def __init__(self, prompt: str = "claw_se> "):
+    def __init__(self, prompt: str = ""):
         self.prompt = prompt
 
     def send(self, text: str) -> None:
-        print(text, flush=True)
+        print(f"claw_se:\n{text}", flush=True)
 
     def receive(self) -> Optional[Msg]:
         try:
@@ -166,7 +170,7 @@ class MsgIO:
         self._current_channel: Optional[str] = None
 
     @classmethod
-    def get_io(cls) -> "MsgIO":
+    def get_msg_io(cls) -> "MsgIO":
         """Return the global MsgIO singleton."""
         if cls._instance is None:
             cls._instance = cls()
@@ -322,6 +326,6 @@ class MsgIO:
             self.unregister(name)
 
 
-def get_io() -> MsgIO:
+def get_msg_io() -> MsgIO:
     """Return the global MsgIO singleton (convenience)."""
-    return MsgIO.get_io()
+    return MsgIO.get_msg_io()

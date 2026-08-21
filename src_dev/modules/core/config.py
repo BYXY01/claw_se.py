@@ -107,6 +107,10 @@ _SECURITY_DEFAULTS: dict = {
     "review_on_block": False,       # whether a blacklist hit can be reviewed once (fix #6)
     "override_threshold": 3,        # same command allowed-once N times -> prompt to whitelist
     "module_check": "normal",       # module-load check mode: normal/strict
+    "heartbeat": {                  # periodic synthetic check-in (OpenClaw-inspired)
+        "every": 0,                 # seconds between beats; 0 = disabled (security-first)
+        "prompt": "Heartbeat: check whether anything needs attention; if nothing, reply HEARTBEAT_OK.",
+    },
     "version": "v1",
 }
 

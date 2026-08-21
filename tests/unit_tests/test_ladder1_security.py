@@ -143,6 +143,35 @@ def test_self_dir_guard(tmp_path, protected):
     assert self_dir_match("cat /etc/hostname", protected) is None
 
 
+def test_self_defense_protects_core_and_config_but_not_prompts(tmp_path, protected):
+    # whole modules/core directory (kernel code AND its data/lists)
+    assert self_dir_match("rm modules/core/security/data/blacklist.json", protected) is not None
+    assert self_dir_match("echo x > modules/core/config.py", protected) is not None
+    # config/*.json (security / module / provider switches)
+    assert self_dir_match("echo x > config/security.json", protected) is not None
+    assert self_dir_match("rm config/modules.json", protected) is not None
+    assert self_dir_match("rm config/providers.json", protected) is not None
+    # deliberately editable: prompt_library .md (identity/user) and module runtime data
+    assert self_dir_match("echo x > prompt_library/IDENTITY.md", protected) is None
+    assert self_dir_match("echo x > prompt_library/USER.md", protected) is None
+    assert self_dir_match("echo x > prompt_library/BOOTSTRAP.md", protected) is None
+    assert self_dir_match("echo x > modules/memory/data/note.md", protected) is None
+
+
+def test_self_defense_blocks_env_anywhere(tmp_path, protected):
+    # .env files are secrets: reading or writing one is blocked in ANY directory
+    assert self_dir_match("cat .env", protected) is not None
+    assert self_dir_match("cat ~/project/.env", protected) is not None
+    assert self_dir_match("cat /home/user/app/.env.local", protected) is not None
+    assert self_dir_match("echo x > .env.prod", protected) is not None
+    assert self_dir_match("cat src_dev/.env", protected) is not None
+    # a file that merely contains ".env" in its name is NOT a secret file
+    assert self_dir_match("cat my.environment", protected) is None
+    assert self_dir_match("cat secret.env", protected) is None
+    # non-secret targets still pass
+    assert self_dir_match("cat prompt_library/USER.md", protected) is None
+
+
 # ---------------- wrapper ----------------
 def test_wrapper_blacklist_blocked(tmp_path, security_config):
     ctx = make_ctx(security_config, tmp_path)

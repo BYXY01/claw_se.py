@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from modules.core.msgio import MsgIO, get_io
+from modules.core.msgio import MsgIO, get_msg_io
 from modules.core.plugins import Kind, Manifest, PluginAPI, PluginLoader
 from modules.core.plugins import _audit_manifest, classify, collect_guard_map, collect_tools
 from modules.core.plugins import wire_channels
@@ -128,10 +128,10 @@ def PLUGIN(api):
                                     "capabilities": ["channel"]}, channel_plugin)
     plugins = _loader(tmp_path).load_all()
     assert len(plugins) == 1
-    io = get_io()
-    wire_channels(plugins, register_channel=io.register)
-    assert "ping" in io.channels
-    io.send("hello", channel="ping")  # routed through msgio without error
+    msg_io = get_msg_io()
+    wire_channels(plugins, register_channel=msg_io.register)
+    assert "ping" in msg_io.channels
+    msg_io.send("hello", channel="ping")  # routed through msgio without error
     MsgIO.reset_io()
 
 
@@ -153,3 +153,97 @@ def PLUGIN(api):
     assert [name for name, _hook in api.hooks()] == ["on_load"]
     metas = api.providers()
     assert metas == [({"name": "remote", "models": {}}, True), ({"name": "local"}, False)]
+
+
+def test_factory_register_provider_and_resolve():
+    """A plugin-registered provider resolves through the factory seam."""
+    from modules.core import factory
+    factory.register_provider({
+        "name": "plug", "api_base": "https://plug.example",
+        "models": {"main": {"model": "plug-chat", "key_ref": "PLUG_KEY", "ctx": 100}},
+    }, review=True)
+    cfg = {"providers": {}, "role_map": {"main": "plug.main"}}
+    provider, spec = factory.resolve_model_spec(cfg, "main")
+    assert spec["model"] == "plug-chat"
+    assert provider["api_base"] == "https://plug.example"
+    assert factory._PLUGIN_PROVIDERS["plug"][1] is True
+    # unknown provider (not in json, not a plugin) still raises
+    with pytest.raises(KeyError):
+        factory.resolve_model_spec({"providers": {}, "role_map": {"x": "nope.main"}}, "x")
+
+
+def test_http_channel_plugin(tmp_path):
+    """The shipped neutral HTTP channel plugin: real network round-trip."""
+    import json
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from pathlib import Path
+
+    import modules
+    from modules.core.msgio import MsgIO, get_msg_io
+    from modules.core.plugins import PluginLoader, wire_channels
+
+    sent: list[str] = []
+    inbound: list[str] = []
+
+    class _Relay(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/poll"):
+                body = json.dumps({"text": inbound.pop(0) if inbound else None}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_POST(self):
+            if self.path.startswith("/send"):
+                length = int(self.headers.get("Content-Length", 0))
+                sent.append(json.loads(self.rfile.read(length).decode("utf-8")).get("text"))
+                self.send_response(200)
+                self.end_headers()
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _Relay)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    endpoint = f"http://127.0.0.1:{server.server_address[1]}"
+
+    MsgIO.reset_io()
+    try:
+        modules_root = Path(modules.__file__).parent
+        loader = PluginLoader(modules_root, {"firewall": "on", "detect": "off"},
+                              modules_root.parent, env={"CHANNEL_ENDPOINT": endpoint})
+        plugins = loader.load_all()
+        assert any(p.plugin_id == "http_channel" for p in plugins)
+        io = get_msg_io()
+        wire_channels(plugins, register_channel=io.register)
+        assert "http_channel" in io.channels
+
+        # inbound: the bridge worker long-polls the relay and delivers a Msg
+        inbound.append("hello from http")
+        msg = None
+        for _ in range(200):
+            msg = io.receive()
+            if msg is not None:
+                break
+            time.sleep(0.05)
+        assert msg is not None
+        assert msg.channel == "http_channel"
+        assert msg.text == "hello from http"
+
+        # outbound: send() POSTs to the relay
+        io.send("reply from claw_se", channel="http_channel")
+        time.sleep(0.3)
+        assert "reply from claw_se" in sent
+    finally:
+        server.shutdown()
+        MsgIO.reset_io()

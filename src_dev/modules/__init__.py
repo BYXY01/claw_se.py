@@ -184,6 +184,23 @@ def wire_plugin_channels() -> None:
     """Register channel capabilities of loaded plugins into the MsgIO bus."""
     if not _PLUGINS:
         return
-    from .core.msgio import get_io
+    from .core.msgio import get_msg_io
     from .core.plugins import wire_channels
-    wire_channels(_PLUGINS, register_channel=get_io().register)
+    wire_channels(_PLUGINS, register_channel=get_msg_io().register)
+
+
+def wire_plugin_providers() -> None:
+    """Register provider capabilities of loaded plugins into the agent factory.
+
+    Provider plugins are only consumed through the factory seam (no bare
+    ChatOpenAI); messages via them keep passing the security chain.
+    """
+    if not _PLUGINS:
+        return
+    from .core import factory
+    for plugin in _PLUGINS:
+        for provider_meta, review in plugin.api.providers():
+            try:
+                factory.register_provider(provider_meta, review=review)
+            except Exception as e:  # noqa: BLE001
+                logger.error("plugin %s provider wiring failed: %s", plugin.plugin_id, e)

@@ -1,0 +1,8 @@
+{
+  "id": "http_channel",
+  "name": "http_channel",
+  "version": "0.1",
+  "requires": [],
+  "auth": [],
+  "capabilities": ["channel"]
+}

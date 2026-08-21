@@ -216,7 +216,7 @@ def _stop_process(pid: int) -> str:
         # sweep until no group member remains: after the leader dies no new member
         # can appear, so a bounded retry converges deterministically (a member can
         # fork into visibility between two sweeps under load).
-        sweep_deadline = time.time() + 1.0
+        sweep_deadline = time.time() + 3.0
         while time.time() < sweep_deadline and _kill_group_stragglers(pgid, force=forced):
             time.sleep(0.05)
         info["status"] = "stopped"
@@ -307,20 +307,35 @@ def execute(command: str = "", operation: str = "run", pid: Optional[int] = None
             blocked = _check_self_dir(command)
             if blocked:
                 return f"[SE] Blocked (self-directory guard): {blocked}"
+            kwargs = dict(
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+            )
+            # own session/group so a timeout can kill the WHOLE tree, not just the
+            # shell (the orphaned child would otherwise keep the console stdin and
+            # hang the terminal channel). stdin stays inherited: interactive
+            # commands (read/pause) need the user's input.
+            if env.IS_WIN:
+                kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                kwargs["start_new_session"] = True
             try:
-                result = subprocess.run(
-                    command,
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    encoding="utf-8",
-                    errors="ignore",
-                    timeout=timeout,
-                )
+                process = subprocess.Popen(command, **kwargs)
+            except OSError as e:
+                return f"Error: {e}"
+            try:
+                out, err = process.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
+                pgid = os.getpgid(process.pid) if hasattr(os, "getpgid") else None
+                _kill_tree(process, force=True)
+                _kill_group_stragglers(pgid, force=True)
+                process.wait()
                 return f"[SE] Command timed out after {timeout}s (blocked to prevent hang)."
-            return (result.stdout + result.stderr).strip() or "(no output)"
+            return (out + err).strip() or "(no output)"
 
         if operation == "start":
             if not command:
@@ -358,7 +373,7 @@ def execute(command: str = "", operation: str = "run", pid: Optional[int] = None
 
 FEATURE = {
     "name": "exec",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "desc": "Unified executor: foreground command + background process management",
     "tools": [execute],
     "hooks": {},

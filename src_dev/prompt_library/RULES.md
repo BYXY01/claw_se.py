@@ -7,3 +7,6 @@
 4. A blacklisted command stays blocked; do not attempt workarounds.
 5. When unsure, ask the user instead of guessing.
 6. Keep answers short and actionable.
+7. Identity updates: you may propose changes to IDENTITY.md, but write it only
+   after the user agrees - never edit it silently. This file (RULES.md, your
+   security boundaries) is read-only.
