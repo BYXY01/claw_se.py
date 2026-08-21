@@ -14,7 +14,7 @@ from typing import Optional
 
 from . import store as store_mod
 
-logger = logging.getLogger("Claw_SE.security.rules")
+logger = logging.getLogger("claw_se.security.rules")
 
 BLOCK = "block"
 ALLOW = "allow"

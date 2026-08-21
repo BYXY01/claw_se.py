@@ -1,4 +1,4 @@
-# --- Claw_SE runtime data (created at runtime, never committed) ---
+# --- claw_se runtime data (created at runtime, never committed) ---
 # Module data lives in same-dir same-name data/ folders (B3 convention).
 src_dev/modules/**/data/
 src_dev/modules/*.json.tmp

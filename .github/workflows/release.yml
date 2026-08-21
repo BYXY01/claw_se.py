@@ -1,0 +1,98 @@
+name: Release
+
+run-name: ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "0.0.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build claw_se.py (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install langchain langchain-openai langchain-core python-dotenv psutil pytest
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Build single-file distribution
+        run: python builder.py --out dist
+
+      - name: Run unit tests (offline)
+        run: python -m pytest tests/unit_tests -q
+
+      - name: Upload single file
+        uses: actions/upload-artifact@v4
+        with:
+          name: claw_se.py
+          path: dist/claw_se.py
+
+  exe:
+    name: Build claw_se.exe (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install langchain langchain-openai langchain-core python-dotenv psutil pyinstaller
+
+      - name: Build single file + exe (PyInstaller onefile)
+        run: python builder.py --exe --out dist
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: claw_se.exe
+          path: dist/claw_se.exe
+
+  publish:
+    name: Publish GitHub Release
+    needs: [build, exe]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          prerelease: true
+          body: |
+            Auto-built by GitHub Actions.
+
+            - `claw_se.py` - single-file Python distribution (all platforms)
+            - `claw_se.exe` - Windows onefile build (PyInstaller)
+          files: release-assets/*
+          fail_on_unmatched_files: true

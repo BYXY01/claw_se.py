@@ -29,7 +29,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("Claw_SE.security.store")
+logger = logging.getLogger("claw_se.security.store")
 
 KEYWORD_LISTS = ("blacklist", "self", "whitelist", "asklist")
 OVERRIDES_LIST = "overrides"

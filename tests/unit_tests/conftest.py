@@ -1,4 +1,4 @@
-"""Pytest config: make the Claw_SE dev body importable and share helpers."""
+"""Pytest config: make the claw_se dev body importable and share helpers."""
 import sys
 from pathlib import Path
 

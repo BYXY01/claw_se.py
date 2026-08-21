@@ -25,11 +25,12 @@ from typing import Optional
 from langchain_core.tools import StructuredTool
 
 from ..interaction.base import get_interaction
+from ..msgio import get_io
 from . import rules as rules_mod
 from . import store as store_mod
 from .judge import SafetyJudge
 
-logger = logging.getLogger("Claw_SE.security.wrapper")
+logger = logging.getLogger("claw_se.security.wrapper")
 
 EXECUTE = "execute"
 BLOCKED = "blocked"
@@ -136,7 +137,8 @@ def _ask_user(ctx: SecurityContext, value: str, execute, *args, **kwargs) -> str
     """Four-choice interaction: whitelist / allow-once / deny-once / blacklist."""
     interaction = get_interaction()
     options = _REVIEW_OPTIONS if ctx.config.review_on_block else _ASK_OPTIONS
-    choice = interaction.ask_four(f"Command [{value}] needs your decision:", options)
+    channel = get_io().current_channel or ""
+    choice = interaction.ask_four(f"Command [{value}] needs your decision:", options, channel=channel)
 
     if choice == "add to whitelist":
         ctx.store.add(value, "whitelist")
@@ -146,7 +148,8 @@ def _ask_user(ctx: SecurityContext, value: str, execute, *args, **kwargs) -> str
         count = ctx.store.override_count(value, "allow_once")
         if count >= ctx.config.override_threshold:
             upgrade = interaction.ask_four(
-                f"[{value}] was allowed once {count} times; upgrade to whitelist?", _UPGRADE_OPTIONS)
+                f"[{value}] was allowed once {count} times; upgrade to whitelist?",
+                _UPGRADE_OPTIONS, channel=channel)
             if upgrade == "upgrade to whitelist":
                 ctx.store.add(value, "whitelist")
         return execute(*args, **kwargs)

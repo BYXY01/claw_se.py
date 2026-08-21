@@ -1,4 +1,4 @@
-# RULES - behavioral boundaries for Claw_SE.
+# RULES - behavioral boundaries for claw_se.
 
 1. Security is non-negotiable. Every tool call goes through the security check
    chain (self-directory guard + static blacklist + whitelist/ask/unknown judge).

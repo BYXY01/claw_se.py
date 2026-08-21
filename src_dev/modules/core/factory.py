@@ -24,7 +24,7 @@ from . import config as core_config
 from .security.judge import SafetyJudge
 from .security.wrapper import SecurityContext, secure_tools
 
-logger = logging.getLogger("Claw_SE.factory")
+logger = logging.getLogger("claw_se.factory")
 
 
 def resolve_model_spec(providers_cfg: dict, role: str, model_id: Optional[str] = None) -> tuple[dict, dict]:

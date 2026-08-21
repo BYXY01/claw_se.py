@@ -6,6 +6,7 @@
 - background `input` is intentionally NOT security-checked (fix #8): the user has already
   confirmed the target process when it was started.
 """
+import os
 import subprocess
 import threading
 import time
@@ -109,22 +110,79 @@ def _kill_tree(proc, force: bool) -> None:
     """Signal the whole process tree (the shell AND its children) via psutil.
 
     With shell=True the Popen object is only the shell; signaling the shell alone
-    would orphan the actual command. psutil walks the real parent/child tree
-    (children(recursive=True) + parent) on every platform - one unified path,
-    native API, no subprocess command.
+    would orphan the actual command. A just-started shell forks its children a
+    few milliseconds AFTER Popen returns (measured ~20ms for `sleep 200 &
+    sleep 100`), so a single children() snapshot taken immediately would miss the
+    late-forked ones. We settle first: keep re-snapshotting until the child set
+    has been unchanged for a meaningful window (>=0.1s) or a short deadline
+    passes - "two identical reads" is NOT enough, a slow fork could land between
+    them and be missed. Then signal every child plus the parent - one unified
+    psutil path on every platform.
     """
     import psutil
     sig = psutil.signal.SIGKILL if force else psutil.signal.SIGTERM
     try:
         p = psutil.Process(proc.pid)
-        for child in p.children(recursive=True):
-            try:
-                child.send_signal(sig)
-            except psutil.NoSuchProcess:
-                continue
+    except psutil.NoSuchProcess:
+        raise ProcessLookupError(f"process {proc.pid} already gone")
+    deadline = time.time() + 1.0
+    prev: Optional[frozenset] = None
+    stable_since: Optional[float] = None
+    while time.time() < deadline:
+        try:
+            cur = frozenset(p.children(recursive=True))
+        except psutil.NoSuchProcess:
+            raise ProcessLookupError(f"process {proc.pid} already gone")
+        if (prev is not None and cur == prev and stable_since is not None
+                and time.time() - stable_since >= 0.1):
+            break
+        if prev is None or cur != prev:
+            stable_since = time.time()
+        prev = cur
+        time.sleep(0.02)
+    for child in prev or frozenset():
+        try:
+            child.send_signal(sig)
+        except psutil.NoSuchProcess:
+            continue
+    try:
         p.send_signal(sig)
     except psutil.NoSuchProcess:
         raise ProcessLookupError(f"process {proc.pid} already gone")
+
+
+def _kill_group_stragglers(pgid: Optional[int], force: bool) -> bool:
+    """Kill any process still in the job's process group; return whether any was found.
+
+    A just-started shell forks its children a few ms AFTER Popen returns, so a
+    tree walk taken too early can miss late-forked children. Once the shell (the
+    group leader) dies, those orphans keep the group id but are reparented to
+    init - unreachable by any tree walk. Sweeping the process group after the
+    leader is gone closes that race: no new member can appear after the leader
+    dies, so every surviving member is found and killed via psutil. os.getpgid is
+    used only to select the group; the kill itself stays on the psutil dependency.
+
+    Args:
+        pgid: the process group to sweep (captured before the leader died).
+        force: SIGKILL when True, else SIGTERM.
+
+    Returns:
+        True if at least one group member was found (caller should re-sweep,
+        since a member can fork into visibility between sweeps), else False.
+    """
+    if pgid is None or not hasattr(os, "getpgid"):
+        return False
+    import psutil
+    sig = psutil.signal.SIGKILL if force else psutil.signal.SIGTERM
+    found = False
+    for p in psutil.process_iter():
+        try:
+            if os.getpgid(p.pid) == pgid:
+                p.send_signal(sig)
+                found = True
+        except (psutil.NoSuchProcess, psutil.AccessDenied, ProcessLookupError, OSError):
+            continue
+    return found
 
 
 def _stop_process(pid: int) -> str:
@@ -140,6 +198,13 @@ def _stop_process(pid: int) -> str:
         return f"Error: Process {pid} not found"
     info = _processes[pid]
     proc = info["process"]
+    pgid = None
+    if hasattr(os, "getpgid"):
+        try:
+            pgid = os.getpgid(proc.pid)
+        except (ProcessLookupError, OSError):
+            pgid = None
+    forced = False
     try:
         _kill_tree(proc, force=False)
         try:
@@ -147,6 +212,13 @@ def _stop_process(pid: int) -> str:
         except subprocess.TimeoutExpired:
             _kill_tree(proc, force=True)
             proc.wait(timeout=5)
+            forced = True
+        # sweep until no group member remains: after the leader dies no new member
+        # can appear, so a bounded retry converges deterministically (a member can
+        # fork into visibility between two sweeps under load).
+        sweep_deadline = time.time() + 1.0
+        while time.time() < sweep_deadline and _kill_group_stragglers(pgid, force=forced):
+            time.sleep(0.05)
         info["status"] = "stopped"
         return f"Process {pid} stopped"
     except ProcessLookupError:
@@ -155,6 +227,7 @@ def _stop_process(pid: int) -> str:
     except Exception as e:
         try:
             _kill_tree(proc, force=True)
+            _kill_group_stragglers(pgid, force=True)
             info["status"] = "killed"
             return f"Process {pid} killed"
         except Exception:

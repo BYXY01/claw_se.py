@@ -27,7 +27,7 @@ from langchain_openai import ChatOpenAI
 
 from .store import _DEFAULT_BLACKLIST_KEYWORDS, _DEFAULT_INJECTION_FEATURES
 
-logger = logging.getLogger("Claw_SE.security.judge")
+logger = logging.getLogger("claw_se.security.judge")
 
 _PROMPT = """You are a strict security reviewer. Evaluate the possible consequences of the
 following command/input and decide whether to allow it.

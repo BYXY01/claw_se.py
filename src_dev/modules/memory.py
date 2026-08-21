@@ -13,7 +13,7 @@ from langchain_core.tools import tool
 
 from .core import config as core_config
 
-logger = logging.getLogger("Claw_SE.memory")
+logger = logging.getLogger("claw_se.memory")
 
 
 def _data_dir() -> Path:

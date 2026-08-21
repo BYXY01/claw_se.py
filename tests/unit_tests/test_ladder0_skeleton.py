@@ -13,19 +13,19 @@ from modules.core.security.wrapper import SecurityConfig, SecurityContext
 
 
 class FakeBackend(MsgBackend):
-    """In-memory backend for tests: queues a single canned message."""
+    """In-memory non-blocking backend for tests: queues canned messages."""
 
     name = "fake"
+    blocking = False
 
     def __init__(self, messages=None):
         self._queue = list(messages or [])
         self._sent = []
-        self.name = self.__class__.name
 
     def send(self, text: str) -> None:
         self._sent.append(text)
 
-    def receive(self):
+    def poll(self):
         if not self._queue:
             return None
         item = self._queue.pop(0)

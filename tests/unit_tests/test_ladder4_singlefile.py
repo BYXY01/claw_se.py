@@ -104,7 +104,7 @@ def test_no_boot_in_dev_tree():
     builder_src = Path(__file__).resolve().parents[2] / "builder.py"
     text = builder_src.read_text(encoding="utf-8")
     assert "_boot" in text
-    assert "Claw_SE started" in text
+    assert "claw_se started" in text
 
 
 def test_embedded_loop_refuses_dev_tree(tmp_path):
@@ -124,6 +124,31 @@ def test_embedded_loop_refuses_dev_tree(tmp_path):
     c._PAYLOAD = {}
     with pytest.raises(SystemExit):
         c._ensure_genuine_run(fake)
+
+
+def test_win_must_be_exe(tmp_path, monkeypatch):
+    """Windows only ships as a frozen exe: the genuine-run guard refuses a bare
+    `python claw_se.py` on Windows; the frozen exe and POSIX runs are allowed."""
+    import types
+    import pytest
+    c = _import_built(tmp_path)
+    fake = types.ModuleType("modules")
+    fake.__file__ = str(tmp_path / "release" / "modules" / "__init__.py")
+
+    # Windows + not frozen (running the raw script) -> refuse
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setitem(sys.__dict__, "frozen", False)
+    with pytest.raises(SystemExit):
+        c._ensure_genuine_run(fake)
+
+    # Windows + frozen (claw_se.exe) -> allowed
+    monkeypatch.setitem(sys.__dict__, "frozen", True)
+    c._ensure_genuine_run(fake)
+
+    # POSIX (raw script is the supported distribution) -> allowed
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setitem(sys.__dict__, "frozen", False)
+    c._ensure_genuine_run(fake)
 
 
 def test_released_modules_offline_security(tmp_path):

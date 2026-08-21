@@ -25,7 +25,7 @@ from .core import config as core_config
 from .core import factory as factory_mod
 from .core.security.wrapper import SecurityContext
 
-logger = logging.getLogger("Claw_SE.delegate")
+logger = logging.getLogger("claw_se.delegate")
 
 _ctx: Optional[SecurityContext] = None
 _all_tools: dict[str, object] = {}

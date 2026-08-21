@@ -1,4 +1,4 @@
-"""Feature discovery and loading for Claw_SE.
+"""Feature discovery and loading for claw_se.
 
 Each peripheral module (single `.py` under modules/) may declare a FEATURE dict:
     FEATURE = {
@@ -26,7 +26,7 @@ from typing import Optional
 from .core import config as core_config
 from .core.security import ModuleTrust, validate_module
 
-logger = logging.getLogger("Claw_SE.modules")
+logger = logging.getLogger("claw_se.modules")
 
 _MODULES_ROOT = Path(__file__).resolve().parent
 _APP_ROOT = _MODULES_ROOT.parent

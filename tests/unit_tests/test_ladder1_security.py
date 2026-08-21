@@ -17,11 +17,11 @@ class FakeInteraction(InteractionProvider):
         self.choice = choice
         self.questions: list[str] = []
 
-    def ask_four(self, question: str, options: list[str]) -> str:
+    def ask_four(self, question: str, options: list[str], *, channel: str = "") -> str:
         self.questions.append(question)
         return self.choice
 
-    def notify(self, content: str, target: str = "") -> str:
+    def notify(self, content: str, target: str = "", *, channel: str = "") -> str:
         return content
 
 

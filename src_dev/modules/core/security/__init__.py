@@ -24,7 +24,7 @@ __all__ = [
     "build_stack", "protected_dirs", "ModuleTrust", "validate_module",
 ]
 
-logger = logging.getLogger("Claw_SE.security")
+logger = logging.getLogger("claw_se.security")
 
 # Malicious markers always scanned for (hard risk, mode-independent).
 MALICIOUS_PATTERNS = [

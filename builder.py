@@ -1,4 +1,4 @@
-"""Claw_SE single-file builder (internal)."""
+"""claw_se single-file builder (internal)."""
 import argparse
 import json
 import sys
@@ -9,7 +9,7 @@ SRC_DEV = ROOT / "src_dev"
 
 _PLACE = "_PAYLOAD: dict[str, str] = {}"
 _VERSION = (ROOT / "version.txt").read_text(encoding="utf-8").strip()
-_BN = f'#!/usr/bin/env python3\n# claw_se.py - Claw_SE (Small + Security edition) v{_VERSION} single-file build\n'
+_BN = f'#!/usr/bin/env python3\n# claw_se.py - claw_se (Small + Security edition) v{_VERSION} single-file build\n'
 _X = {".env"}
 
 _H = r'''
@@ -20,7 +20,7 @@ from pathlib import Path
 _PAYLOAD: dict[str, str] = {}
 _CORE_DEPS = ["langchain", "langchain-openai", "langchain-core", "python-dotenv", "psutil"]
 _CORE_IMPORTS = ["langchain", "langchain_openai", "langchain_core", "dotenv", "psutil"]
-_BANNER = "Claw_SE (Small + Security edition, single-file build)"
+_BANNER = "claw_se (Small + Security edition, single-file build)"
 _FALLBACK_PROMPT = (
     "You are a local AI assistant protected by a security layer. "
     "You can run commands (execute), handle files (file_op), and query info (get_info). "
@@ -105,7 +105,9 @@ def _ensure_genuine_run(modules_mod) -> None:
     """Refuse to run the main loop in non-genuine contexts (defense in depth).
     Even though the main loop only exists inside this single file, it refuses to
     boot when:
-    - the payload is missing/stripped (not a genuine build), or
+    - the payload is missing/stripped (not a genuine build),
+    - the platform is Windows but the process is not the frozen exe (Windows
+      ships as claw_se.exe only; a bare `python claw_se.py` is refused), or
     - the `modules` package it would drive comes from the cloned development
       tree (src_dev/) - i.e. someone is running this loop against a dev tree
       instead of a proper release.
@@ -113,6 +115,10 @@ def _ensure_genuine_run(modules_mod) -> None:
     if not _PAYLOAD:
         _refuse("invalid or stripped single file, refusing to start (bare-run defense). "
                 "Please re-download claw_se.py from the release.")
+    on_windows = sys.platform.startswith("win") or os.name == "nt"
+    if on_windows and not getattr(sys, "frozen", False):
+        _refuse("Windows must run the frozen build (claw_se.exe). "
+                "Download claw_se.exe from the release; do not run 'python claw_se.py'.")
     module_path = getattr(modules_mod, "__file__", "")
     try:
         inside_src_dev = "src_dev" in Path(module_path).resolve().parts
@@ -144,6 +150,7 @@ def _detection_needs_judge(security_config: dict) -> bool:
 def _boot(root: Path) -> None:
     """The main loop, embedded in this single file only (imports happen after release)."""
     import logging
+    import time
     from langchain_core.messages import HumanMessage
     from langgraph.checkpoint.memory import InMemorySaver
     import modules
@@ -152,10 +159,10 @@ def _boot(root: Path) -> None:
     from modules.core import factory
     from modules.core.msgio import TerminalBackend, get_io
     from modules.core.security import build_stack
-    logger = logging.getLogger("Claw_SE.boot")
+    logger = logging.getLogger("claw_se.boot")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     _v = getattr(sys.modules.get("__main__"), "version", "unknown")
-    logger.info("Claw_SE version: %s", _v)
+    logger.info("claw_se version: %s", _v)
     _ensure_genuine_run(modules)
     core_config.ensure_config_files(root)
     core_config.load_env()
@@ -195,20 +202,25 @@ def _boot(root: Path) -> None:
     io = get_io()
     io.set_input_guard(guard)
     io.register(TerminalBackend())
-    io.send("Claw_SE started (Small + Security edition, single-file). "
+    io.send("claw_se started (Small + Security edition, single-file). "
             "Type a message, Ctrl+C to exit.")
     thread_id = {"configurable": {"thread_id": "main"}}
     while True:
         try:
             msg = io.receive()
             if msg is None:
+                time.sleep(0.1)  # no input on any channel: rest, don't spin
                 continue
             user_input = msg.text
             channel = msg.channel
             logger.info("User: %s", user_input.replace("\n", "\\n"))
             io.send("\nAI: ", channel=channel)
-            response = agent.invoke(
-                {"messages": [HumanMessage(content=user_input)]}, config=thread_id)
+            io.set_current_channel(channel)
+            try:
+                response = agent.invoke(
+                    {"messages": [HumanMessage(content=user_input)]}, config=thread_id)
+            finally:
+                io.set_current_channel(None)
             ai_response = response["messages"][-1].content if isinstance(response, dict) else str(response)
             io.send(ai_response if isinstance(ai_response, str) else str(ai_response), channel=channel)
             io.send("", channel=channel)
@@ -262,9 +274,23 @@ def _exe(f):
     except ImportError:
         print("[builder] PyInstaller not installed; skipping claw_se.exe")
         return False
-    subprocess.check_call([sys.executable, "-m", "PyInstaller", "--onefile", "--console",
-                           "--name", "claw_se", "--hidden-import", "langchain_openai",
-                           "--hidden-import", "langchain_core", str(f)])
+    # Runtime deps that are imported LAZILY (inside functions / the boot loop) are
+    # not picked up by PyInstaller's static scan, so they must be declared here or
+    # the exe breaks at runtime (e.g. process-kill needs psutil, the boot loop
+    # needs langgraph.checkpoint.memory). Executable deps are auto-detected.
+    hidden_imports = [
+        "langchain_openai",
+        "langchain_core",
+        "psutil",
+        "langgraph",
+        "langgraph.checkpoint.memory",
+    ]
+    args = [sys.executable, "-m", "PyInstaller", "--onefile", "--console",
+            "--name", "claw_se"]
+    for mod in hidden_imports:
+        args += ["--hidden-import", mod]
+    args.append(str(f))
+    subprocess.check_call(args)
     return True
 
 
