@@ -3,6 +3,7 @@ from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 
 import modules
+from modules import delegate as delegate_mod
 from modules.core import factory as factory_mod
 from modules.core.security import protected_dirs
 from modules.core.security.rules import Rules
@@ -72,7 +73,14 @@ def test_delegate_depth_limit(tmp_path, security_config, monkeypatch):
     from modules import delegate as d
     ctx = make_ctx(security_config, tmp_path)
     d.configure(ctx, max_depth=1)
-    monkeypatch.setattr(factory_mod, "delegate_model", lambda **k: "sub ok")
+
+    def fake_delegate_model(**kw):
+        # mimic the real factory guard (single source of truth, fix #5)
+        if kw.get("depth", 0) >= kw.get("max_depth", 2):
+            raise RuntimeError("delegation depth exceeded max_depth")
+        return "sub ok"
+
+    monkeypatch.setattr(delegate_mod, "delegate_model", fake_delegate_model)
 
     # depth 0 < max_depth=1 -> proceeds
     out = d.task_to_submodel.invoke({"prompt_name": "p", "input_data": "i"})
@@ -91,7 +99,7 @@ def test_delegate_not_configured_message(tmp_path, security_config):
     assert "not configured" in out
 
 
-# ---------------- factory.delegate_model (context trimming + depth guard) ----------------
+# ---------------- delegate.delegate_model (context trimming + depth guard) ----------------
 def test_delegate_model_context_trimming(tmp_path, security_config, monkeypatch):
     captured = {}
 
@@ -101,7 +109,7 @@ def test_delegate_model_context_trimming(tmp_path, security_config, monkeypatch)
             return {"messages": [SystemMessage(content="ok")]}
 
     monkeypatch.setattr(factory_mod, "build_agent", lambda **k: FakeSubAgent())
-    out = factory_mod.delegate_model(
+    out = delegate_mod.delegate_model(
         prompt="P", input_data="I", full_context_share=False, context_content="CTX")
     assert out == "ok"
     texts = [getattr(m, "content", "") for m in captured["messages"]]
@@ -111,13 +119,13 @@ def test_delegate_model_context_trimming(tmp_path, security_config, monkeypatch)
 def test_delegate_model_requires_context_in_isolation():
     import pytest
     with pytest.raises(ValueError):
-        factory_mod.delegate_model(prompt="P", input_data="I", full_context_share=False, context_content=None)
+        delegate_mod.delegate_model(prompt="P", input_data="I", full_context_share=False, context_content=None)
 
 
 def test_delegate_model_depth_guard():
     import pytest
     with pytest.raises(RuntimeError):
-        factory_mod.delegate_model(prompt="P", input_data="I", depth=2, max_depth=2)
+        delegate_mod.delegate_model(prompt="P", input_data="I", depth=2, max_depth=2)
 
 
 # ---------------- sub-agent secure injection + least privilege (fix #11/A8) ----------------
@@ -146,7 +154,7 @@ def test_sub_agent_tools_least_privilege(tmp_path, security_config, monkeypatch)
         captured["guards"] = kw.get("tool_guards", {})
         return "ok"
 
-    monkeypatch.setattr(factory_mod, "delegate_model", fake_delegate_model)
+    monkeypatch.setattr(delegate_mod, "delegate_model", fake_delegate_model)
 
     out = d.task_to_submodel.invoke(
         {"prompt_name": "p", "input_data": "i", "tools_to_share": "read_file"})

@@ -13,8 +13,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from .input_guard import InputGuard
-from .judge import SafetyJudge
+from .judge import InputGuard, SafetyJudge
 from .rules import Rules
 from .store import Store
 from .wrapper import SecurityConfig, SecurityContext, secure_tool, secure_tools

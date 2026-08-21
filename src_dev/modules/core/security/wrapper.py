@@ -1,10 +1,10 @@
-"""secure() security wrapper (ported from ND, fixes #3/#7/#13/#14 applied).
+"""secure() security wrapper (fixes #3/#7/#13/#14 applied).
 
 Unified check chain (every execution is checked, no exceptions, fix #14):
 ```
 tool call arrives
  |- self-directory guard (0 token, hard, always)     -> block on hit (fix #13)
- |- static blacklist (blacklist/self/learned, 0 token) -> block (reviewable once, fix #6)
+ |- static blacklist (incl. self-learned, 0 token) -> block (reviewable once, fix #6)
  |- whitelist hit -> execute directly (still passes static blacklist + self-dir guard)
  |- asklist hit   -> four-choice interaction
  `- unknown       -> independent safety judge
@@ -13,7 +13,7 @@ tool call arrives
        `- cannot tell / failure -> degrade to four-choice (fix #2)
 ```
 Fix #3: tool modules declare `guard_key` in FEATURE (e.g. command/path_or_handle),
-replacing ND's "guess the parameter name" _extract_cmd.
+replacing "guess the parameter name" parameter extraction.
 Fix #7: when overrides reach the threshold (same command allowed-once many times),
 prompt to upgrade to whitelist.
 """
@@ -125,7 +125,7 @@ def _decide(ctx: SecurityContext, value: str) -> tuple[str, str]:
     if result.get("allow") is False:
         feature = result.get("feature")
         if feature:
-            ctx.store.learn(feature)  # dangerous -> feature into learned (self-learning)
+            ctx.store.learn(feature)  # dangerous -> feature self-learned into blacklist
         reason = result.get("reason", "")
         return BLOCKED, f"[SE] Blocked (judge judged dangerous): {value}\nReason: {reason}"
     # allow=None (cannot tell / failure) -> ask the user (fix #2)

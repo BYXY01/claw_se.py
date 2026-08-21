@@ -1,4 +1,4 @@
-"""File operations tool (ported from LC, fixes #10/#13 applied).
+"""File operations tool (fixes #10/#13 applied).
 
 - Quick mode: file_op("path", "read"/"write"/"append").
 - Handle mode: file_op("path", "open", mode=...) -> file_op(handle, ...) -> file_op(handle, "close").

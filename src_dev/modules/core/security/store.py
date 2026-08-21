@@ -1,6 +1,6 @@
-"""List persistence (ported from ND, fixes #4 and #6 applied).
+"""List persistence (fixes #4 and #6 applied).
 
-Fix #4: ND re-reads the file on every check and its lock only guards writes.
+Fix #4: never re-read the file on every check - use a memory cache, write-through and a read/write lock.
 - Memory cache: one in-process copy of the lists, loaded once at startup.
 - Write-through: write operations flush to disk synchronously.
 - Atomic write: write a temp file first, then os.replace.
@@ -13,13 +13,12 @@ reviewed once (see wrapper.review_on_block).
 Five lists:
 - blacklist : static blacklist keywords (0-token permanent block)
 - self      : self-referential features (script dir / own files, injected at startup)
-- learned   : self-learned features (auto-accumulated by judge/input layer, tied to LLM detection switch)
 - whitelist : allowlist (execute directly)
 - asklist   : ask list (four-choice)
 - overrides : user review records (allow-once / deny-once, used for the threshold upgrade prompt)
 
 Persistence layout (paths from config/security.json's *_file, relative to app_root):
-- blacklist.json : {"keywords": [...], "self": [...], "learned": [...], "version": "..."}
+- blacklist.json : {"keywords": [...], "version": "..."}
 - whitelist.json / asklist.json / overrides.json : plain arrays
 """
 import datetime
@@ -32,8 +31,15 @@ from typing import Optional
 
 logger = logging.getLogger("Claw_SE.security.store")
 
-KEYWORD_LISTS = ("blacklist", "self", "learned", "whitelist", "asklist")
+KEYWORD_LISTS = ("blacklist", "self", "whitelist", "asklist")
 OVERRIDES_LIST = "overrides"
+
+def _feature_of(item) -> str:
+    """Extract the feature string from an entry (tuple `(feature, src)` or a bare string)."""
+    if isinstance(item, (list, tuple)) and len(item) >= 1:
+        return item[0]
+    return item if isinstance(item, str) else ""
+
 
 # List file paths are an internal implementation detail of the security kernel:
 # hardcoded here (relative to the app root), NOT user config.
@@ -41,7 +47,6 @@ _LIST_DATA_DIR = "modules/core/security/data"
 _LIST_FILES = {
     "blacklist": "blacklist.json",
     "self": "blacklist.json",   # shares the blacklist file
-    "learned": "blacklist.json",
     "whitelist": "whitelist.json",
     "asklist": "asklist.json",
     "overrides": "overrides.json",
@@ -92,7 +97,6 @@ class Store:
         self._data: dict[str, list] = {
             "blacklist": [],
             "self": [],
-            "learned": [],
             "whitelist": [],
             "asklist": [],
             "overrides": [],
@@ -100,7 +104,7 @@ class Store:
         self._load_all()
 
     def blacklist_path(self) -> Path:
-        """Path of the blacklist file (holds keywords/self/learned)."""
+        """Path of the blacklist file (holds keywords)."""
         return self._root / _LIST_DATA_DIR / "blacklist.json"
 
     def _file_for(self, name: str) -> Optional[Path]:
@@ -111,17 +115,28 @@ class Store:
 
     # ---- initial load (one-shot) ----
     def _load_all(self) -> None:
-        # blacklist file: {keywords, learned, version}. `self` is NOT persisted:
+        # blacklist file: {keywords, version}. `self` is NOT persisted:
         # it is re-computed at boot from the single-file dir + the release dir.
         bl = self._read_json_file(self.blacklist_path())
         if isinstance(bl, dict):
-            self._data["blacklist"] = list(bl.get("keywords", []))
-            self._data["learned"] = list(bl.get("learned", []))
+            entries = []
+            for kw in bl.get("keywords", []):
+                if isinstance(kw, (list, tuple)) and len(kw) == 2:
+                    entries.append((kw[0], kw[1]))
+                else:
+                    entries.append((kw, "manual"))
+            old_learned = [l for l in bl.get("learned", []) if l]  # migration
+            existing = {_feature_of(e) for e in entries}
+            entries += [(_feature_of(l), "learned") for l in old_learned
+                        if _feature_of(l) not in existing]
+            self._data["blacklist"] = entries
+            if old_learned:  # persist merged form (drop the old learned key)
+                self._save_list("blacklist")
         else:
             # first run: seed the static blacklist with the known-dangerous
             # baseline + prompt-injection features (one unified 0-token list)
-            self._data["blacklist"] = list(_DEFAULT_BLACKLIST_KEYWORDS) + list(
-                _DEFAULT_INJECTION_FEATURES)
+            defaults = list(_DEFAULT_BLACKLIST_KEYWORDS) + list(_DEFAULT_INJECTION_FEATURES)
+            self._data["blacklist"] = [(f, "manual") for f in defaults]
             self._save_list("blacklist")
         for name in ("whitelist", "asklist", "overrides"):
             path = self._file_for(name)
@@ -130,10 +145,9 @@ class Store:
             arr = self._read_json_file(path)
             self._data[name] = list(arr) if isinstance(arr, list) else []
 
-        logger.info("store loaded: blacklist=%d self=%d learned=%d whitelist=%d asklist=%d",
+        logger.info("store loaded: blacklist=%d self=%d whitelist=%d asklist=%d",
                     len(self._data["blacklist"]), len(self._data["self"]),
-                    len(self._data["learned"]), len(self._data["whitelist"]),
-                    len(self._data["asklist"]))
+                    len(self._data["whitelist"]), len(self._data["asklist"]))
 
     def _read_json_file(self, path: Path):
         if not path.exists():
@@ -154,11 +168,9 @@ class Store:
     def _save_list(self, name: str) -> None:
         if name == "self":
             return  # self is runtime-computed at boot, never persisted
-        # blacklist + learned live inside the blacklist file as a combined dict
-        if name in ("blacklist", "learned"):
+        if name == "blacklist":
             payload = {
                 "keywords": self._data["blacklist"],
-                "learned": self._data["learned"],
                 "version": self._cfg.get("version", "v1"),
             }
             self._atomic_write(self.blacklist_path(), payload)
@@ -171,9 +183,12 @@ class Store:
     def match_any(self, text: str, name: str) -> bool:
         """Containment match: does text hit any feature of the named list?
 
+        Inline annotations (` //...` or ` #...`) are stripped before matching, so a
+        self-learned entry like "whoami  //learned" still matches the command `whoami`.
+
         Args:
             text: text to judge (command / path / input).
-            name: list name (blacklist/self/learned/whitelist/asklist).
+            name: list name (blacklist/self/whitelist/asklist).
 
         Returns:
             True if any feature matches, False otherwise.
@@ -183,14 +198,15 @@ class Store:
         lowered = text.lower()
         with self._lock:
             for item in self._data.get(name, []):
-                if item and item.lower() in lowered:
+                feature = _feature_of(item).lower()
+                if feature and feature in lowered:
                     return True
         return False
 
     def get_list(self, name: str) -> list:
-        """Return a read-only snapshot of a list's current content."""
+        """Return a read-only snapshot of the list's feature strings (source tags stripped)."""
         with self._lock:
-            return list(self._data.get(name, []))
+            return [_feature_of(item) for item in self._data.get(name, [])]
 
     # ---- write operations (write-through + atomic) ----
     def add(self, feature: str, name: str) -> str:
@@ -208,18 +224,29 @@ class Store:
             return "empty feature, not added"
         with self._lock:
             lst = self._data.setdefault(name, [])
-            if feature not in lst:
-                lst.append(feature)
+            if not any(_feature_of(item) == feature for item in lst):
+                lst.append((feature, "manual") if name == "blacklist" else feature)
                 self._save_list(name)
                 return f"Added to {name}: {feature}"
             return f"Already in {name}: {feature}"
 
     def learn(self, feature: str) -> str:
-        """Self-learn: write a dangerous feature into the learned list.
+        """Self-learn: write a dangerous feature into the blacklist, annotated.
 
+        The entry carries a `//learned` annotation (see the blacklist file) so users
+        can still identify which features were auto-learned by the judge/input layer.
         Tied to the LLM detection switch (no independent switch).
         """
-        return self.add(feature, "learned")
+        feature = feature.strip()
+        if not feature:
+            return "empty feature, not added"
+        with self._lock:
+            lst = self._data.setdefault("blacklist", [])
+            if any(_feature_of(item) == feature for item in lst):
+                return f"Already in blacklist: {feature}"
+            lst.append((feature, "learned"))
+            self._save_list("blacklist")
+            return f"Added to blacklist (learned): {feature}"
 
     def add_self(self, feature: str) -> str:
         """Add a self-referential feature (script dir / own file) to the self list."""

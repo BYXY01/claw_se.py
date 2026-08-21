@@ -1,4 +1,4 @@
-"""MSGIO - global unified message input/output layer (ported from LC, verified, do not rewrite).
+"""MSGIO - global unified message input/output layer.
 
 Core idea: every message in the program travels through the same MsgIO bus
 instead of touching stdin/stdout/network directly. Different channels
@@ -9,7 +9,7 @@ instead of touching stdin/stdout/network directly. Different channels
 - receive() polls all channels and returns a Msg carrying its channel.
 - Adding a channel = implement a MsgBackend + register(), no business-code changes.
 
-SE enhancement (not in LC): receive() runs the input-layer security hook
+Enhancement: receive() runs the input-layer security hook
 (input_guard.check) before returning a message; injection hits are intercepted,
 a notice is echoed back, and the message never reaches the main loop.
 """
@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:  # avoid circular import (input_guard does not import msgio)
-    from .security.input_guard import InputGuard
+    from .security.judge import InputGuard
 
 logger = logging.getLogger("Claw_SE.msgio")
 

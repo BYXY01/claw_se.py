@@ -1,8 +1,7 @@
-"""Decision engine + self-referential defense (ported from ND, fixes #1/#13).
+"""Decision engine + self-referential defense (fixes #1/#13).
 
 - classify(text) returns BLOCK / ALLOW / ASK / UNKNOWN; priority black > white > ask > unknown.
 - Blacklist includes self-referential features (script dir / own files injected at startup, fix #1).
-- learned features also take part in blocking.
 - Self-directory guard (fix #13): self_dir_match() hard-blocks any target that points
   at a `.py` under `modules/` / `src_dev/` — the execution-level fallback of the
   self-referential defense, so the agent cannot tamper with its own module sources
@@ -108,8 +107,7 @@ class Rules:
         if not text:
             return UNKNOWN
         if (self._store.match_any(text, "blacklist")
-                or self._store.match_any(text, "self")
-                or self._store.match_any(text, "learned")):
+                or self._store.match_any(text, "self")):
             return BLOCK
         if self._store.match_any(text, "whitelist"):
             return ALLOW

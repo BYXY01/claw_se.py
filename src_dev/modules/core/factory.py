@@ -1,10 +1,13 @@
 """Unified agent factory: the ONLY seam for creating agents (fix #11/#12).
 
+The factory only MANUFACTURES agents:
 - build_agent(role, model_id, tools, system_prompt, **kw): main / delegate / judge all
   go through this one entry; tools are always wrapped with secure() first.
-- delegate_model(...): dynamic sub-model delegation with max_depth guard (fix #5).
-- Security is injected at the exit of this seam, so no agent can be created
-  bare (`ChatOpenAI()` outside the factory is forbidden).
+- build_judge(...): the independent safety-judge model instance (SECURITY_MODEL).
+
+Extensions (delegation, etc.) are plugin modules that CALL this factory's
+capabilities - e.g. delegate.py builds its sub-agent via build_agent here, so
+security is always injected at this seam (no bare ChatOpenAI outside).
 
 Model resolution (providers.json + role_map):
 - role_map[role] = "provider.model", e.g. "deepseek.main".
@@ -15,7 +18,6 @@ import os
 from typing import Optional
 
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from . import config as core_config
@@ -59,9 +61,13 @@ def resolve_model_spec(providers_cfg: dict, role: str, model_id: Optional[str] =
 def build_chat_model(provider: dict, model_spec: dict, temperature: Optional[float] = None) -> ChatOpenAI:
     """Build a ChatOpenAI client, injecting the secret via key_ref from .env.
 
+    The model's `ctx` from providers.json is exposed as `profile.max_input_tokens`
+    so LangChain's SummarizationMiddleware can auto-summarize at a fraction of the
+    model's actual context window.
+
     Args:
         provider: provider dict (api_base).
-        model_spec: model spec dict (model / key_ref).
+        model_spec: model spec dict (model / key_ref / ctx).
         temperature: optional temperature override.
 
     Returns:
@@ -72,6 +78,7 @@ def build_chat_model(provider: dict, model_spec: dict, temperature: Optional[flo
         "api_key": api_key,
         "base_url": provider.get("api_base", ""),
         "model": model_spec.get("model", ""),
+        "profile": {"max_input_tokens": int(model_spec.get("ctx", 8192))},
     }
     if temperature is not None:
         kwargs["temperature"] = temperature
@@ -98,7 +105,7 @@ def build_judge(providers_cfg: dict) -> SafetyJudge:
 def build_agent(role: str = "main", model_id: Optional[str] = None, tools: Optional[list] = None,
                 tool_guards: Optional[dict[str, str]] = None,
                 system_prompt: Optional[str] = None, ctx: Optional[SecurityContext] = None,
-                **kwargs):
+                checkpointer=None, summarize=None, **kwargs):
     """Build a secure agent from the unified factory.
 
     Args:
@@ -109,6 +116,11 @@ def build_agent(role: str = "main", model_id: Optional[str] = None, tools: Optio
         system_prompt: system prompt string.
         ctx: security decision context; when None, a pass-through context is used
             so that tools are still wrapped but everything is allowed (internal use).
+        checkpointer: LangChain/LangGraph checkpointer (e.g. InMemorySaver) for
+            conversation-state persistence per thread_id.
+        summarize: optional dict {trigger, keep} to auto-summarize the conversation
+            when it grows too long (ConversationSummaryMemory via LangChain's
+            SummarizationMiddleware); None disables it.
         **kwargs: extra args passed to create_agent.
 
     Returns:
@@ -119,60 +131,14 @@ def build_agent(role: str = "main", model_id: Optional[str] = None, tools: Optio
     tools = tools or []
     if ctx is not None:
         tools = secure_tools(tools, tool_guards, ctx)
-    return create_agent(model=model, tools=tools, system_prompt=system_prompt, **kwargs)
-
-
-def delegate_model(prompt: str = "", input_data: str = "", model_id: Optional[str] = None,
-                   full_context_share: bool = True, context_content: Optional[str] = None,
-                   tools_to_share: Optional[list] = None, tool_guards: Optional[dict[str, str]] = None,
-                   ctx: Optional[SecurityContext] = None, session_id: Optional[str] = None,
-                   depth: int = 0, max_depth: int = 2, **model_params) -> str:
-    """Dynamically delegate a task to a sub-model and return its reply (fix #5: max_depth guard).
-
-    Signature follows A6 task_to_submodel. The sub-agent is created via build_agent,
-    so it passes through the factory + secure() (fix #11, no bare ChatOpenAI).
-
-    Args:
-        prompt: system prompt for the sub-agent.
-        input_data: the task input message.
-        model_id: explicit "provider.model" to use.
-        full_context_share: share the full context; when False, context_content must be given.
-        context_content: explicit context snippet for isolation mode (A7).
-        tools_to_share: subset of tools to share (least privilege, A8).
-        tool_guards: tool name -> guard_key mapping for the shared tools.
-        ctx: security decision context.
-        session_id: optional session id (reserved).
-        depth: current recursion depth.
-        max_depth: max recursion depth (default 2).
-        **model_params: extra model params (reserved).
-
-    Returns:
-        The sub-agent's reply text.
-
-    Raises:
-        RuntimeError: when recursion depth exceeds max_depth.
-    """
-    if depth >= max_depth:
-        raise RuntimeError(f"delegation depth exceeded max_depth={max_depth}")
-    if not full_context_share and not context_content:
-        raise ValueError("full_context_share=False requires explicit context_content")
-
-    messages: list = []
-    if full_context_share:
-        messages.append(SystemMessage(content=prompt))
-    elif context_content:
-        messages.append(SystemMessage(content=prompt))
-        messages.append(HumanMessage(content=context_content))
-    messages.append(HumanMessage(content=input_data))
-
-    sub_agent = build_agent(
-        role="delegate",
-        model_id=model_id,
-        tools=tools_to_share or [],
-        tool_guards=tool_guards,
-        system_prompt=prompt,
-        ctx=ctx,
-    )
-    response = sub_agent.invoke({"messages": messages})
-    last = response["messages"][-1]
-    return last.content if hasattr(last, "content") else str(last)
+    kw = dict(kwargs)
+    if checkpointer is not None:
+        kw["checkpointer"] = checkpointer
+    if summarize:
+        from langchain.agents.middleware import SummarizationMiddleware
+        trigger = summarize.get("trigger") if isinstance(summarize, dict) else ("tokens", 3000)
+        keep = summarize.get("keep", ("messages", 20)) if isinstance(summarize, dict) else ("messages", 20)
+        middleware = list(kw.get("middleware", ())) + [
+            SummarizationMiddleware(model=model, trigger=trigger, keep=keep)]
+        kw["middleware"] = middleware
+    return create_agent(model=model, tools=tools, system_prompt=system_prompt, **kw)

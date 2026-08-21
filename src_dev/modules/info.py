@@ -1,4 +1,4 @@
-"""Self-cognition tool: report system and program info (ported from LC)."""
+"""Self-cognition tool: report system and program info."""
 import os
 import platform
 import sys
@@ -20,8 +20,6 @@ def get_info() -> str:
         "processor": platform.processor(),
         "python_version": sys.version.split()[0],
         "current_directory": os.getcwd(),
-        "script_name": os.path.basename(__file__),
-        "script_path": os.path.abspath(__file__),
     }
     return "\n".join(f"{k}: {v}" for k, v in info.items())
 

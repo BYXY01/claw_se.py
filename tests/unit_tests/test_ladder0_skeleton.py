@@ -6,7 +6,7 @@ from langchain_core.tools import tool
 from conftest import SRC_DEV, ToolCallingFake
 from modules.core import config as core_config
 from modules.core.msgio import Msg, MsgBackend, MsgIO, get_io
-from modules.core.security.input_guard import InputGuard
+from modules.core.security.judge import InputGuard
 from modules.core.security.rules import self_dir_match
 from modules.core.security.store import Store
 from modules.core.security.wrapper import SecurityConfig, SecurityContext

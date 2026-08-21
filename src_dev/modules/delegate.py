@@ -18,6 +18,7 @@ the sub-agent's actual tools (exec/file/...) are what get secured.
 import logging
 from typing import Optional
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
 from .core import config as core_config
@@ -94,6 +95,64 @@ def _guard_map_for(shared_tools: list) -> dict:
             for t in shared_tools if getattr(t, "name", None) in _tool_guards}
 
 
+def delegate_model(prompt: str = "", input_data: str = "", model_id: Optional[str] = None,
+                   full_context_share: bool = True, context_content: Optional[str] = None,
+                   tools_to_share: Optional[list] = None, tool_guards: Optional[dict[str, str]] = None,
+                   ctx: Optional[SecurityContext] = None, session_id: Optional[str] = None,
+                   depth: int = 0, max_depth: int = 2, **model_params) -> str:
+    """Dynamically delegate a task to a sub-model and return its reply (fix #5: max_depth guard).
+
+    The sub-agent is created via the factory's build_agent, so it passes through
+    the factory + secure() (fix #11, no bare ChatOpenAI) - the plugin calls the
+    factory's capability.
+
+    Args:
+        prompt: system prompt for the sub-agent.
+        input_data: the task input message.
+        model_id: explicit "provider.model" to use.
+        full_context_share: share the full context; when False, context_content must be given.
+        context_content: explicit context snippet for isolation mode (A7).
+        tools_to_share: subset of tools to share (least privilege, A8).
+        tool_guards: tool name -> guard_key mapping for the shared tools.
+        ctx: security decision context.
+        session_id: optional session id (reserved).
+        depth: current recursion depth.
+        max_depth: max recursion depth (default 2).
+        **model_params: extra model params (reserved).
+
+    Returns:
+        The sub-agent's reply text.
+
+    Raises:
+        RuntimeError: when recursion depth exceeds max_depth.
+        ValueError: when full_context_share=False without explicit context_content.
+    """
+    if depth >= max_depth:
+        raise RuntimeError(f"delegation depth exceeded max_depth={max_depth}")
+    if not full_context_share and not context_content:
+        raise ValueError("full_context_share=False requires explicit context_content")
+
+    messages: list = []
+    if full_context_share:
+        messages.append(SystemMessage(content=prompt))
+    elif context_content:
+        messages.append(SystemMessage(content=prompt))
+        messages.append(HumanMessage(content=context_content))
+    messages.append(HumanMessage(content=input_data))
+
+    sub_agent = factory_mod.build_agent(
+        role="delegate",
+        model_id=model_id,
+        tools=tools_to_share or [],
+        tool_guards=tool_guards,
+        system_prompt=prompt,
+        ctx=ctx,
+    )
+    response = sub_agent.invoke({"messages": messages})
+    last = response["messages"][-1]
+    return last.content if hasattr(last, "content") else str(last)
+
+
 @tool
 def task_to_submodel(
     prompt_name: str = "",
@@ -122,10 +181,6 @@ def task_to_submodel(
     """
     sid = session_id or "default"
     depth = _depths.get(sid, 0)
-    if depth >= _max_depth:
-        return f"[SE] Delegation depth exceeded max_depth={_max_depth}, blocked."
-    if not full_context_share and not context_content:
-        return "[SE] full_context_share=False requires explicit context_content (isolation mode)."
     if _ctx is None:
         return "[SE] delegate not configured (boot-time configure() missing)."
 
@@ -136,7 +191,7 @@ def task_to_submodel(
 
     _depths[sid] = depth + 1
     try:
-        return factory_mod.delegate_model(
+        return delegate_model(
             prompt=_prompt_text(prompt_name),
             input_data=input_data,
             model_id=model_id or None,
@@ -149,7 +204,8 @@ def task_to_submodel(
             depth=depth,
             max_depth=_max_depth,
         )
-    except RuntimeError as e:
+    except (RuntimeError, ValueError) as e:
+        # guards live in delegate_model; surface them as a friendly tool result
         return f"[SE] {e}"
     finally:
         _depths[sid] = depth

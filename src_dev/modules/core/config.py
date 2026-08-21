@@ -8,7 +8,7 @@
 Path convention: this file lives at src_dev/modules/core/config.py,
 three levels up is the dev body root src_dev/ (= APP_ROOT).
 For single-file distribution (ladder 4) the root is overridden by CLAW_SE_HOME / cwd
-and handled in the loader layer.
+and handled in the single-file entry.
 """
 import json
 import os
@@ -23,8 +23,8 @@ _DEV_ROOT = Path(__file__).resolve().parent.parent.parent
 def app_root() -> Path:
     """Return the dev body root (src_dev/).
 
-    In bundled/single-file mode (ladder 4) the loader overrides this with
-    CLAW_SE_HOME / cwd; in dev mode it is always src_dev/.
+    In bundled/single-file mode (ladder 4) the single-file entry overrides this
+    with CLAW_SE_HOME / cwd; in dev mode it is always src_dev/.
     """
     override = os.environ.get("CLAW_SE_HOME")
     if override:

@@ -144,6 +144,7 @@ def _boot(root: Path) -> None:
     """The main loop, embedded in this single file only (imports happen after release)."""
     import logging
     from langchain_core.messages import HumanMessage
+    from langgraph.checkpoint.memory import InMemorySaver
     import modules
     from modules.core import config as core_config
     from modules.core import env
@@ -153,7 +154,7 @@ def _boot(root: Path) -> None:
     logger = logging.getLogger("Claw_SE.boot")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     _ensure_genuine_run(modules)
-    core_config.ensure_config_files(root)  # auto-generate modules.json + security.json
+    core_config.ensure_config_files(root)
     core_config.load_env()
     security_config = core_config.load_security_config()
     judge = None
@@ -182,6 +183,8 @@ def _boot(root: Path) -> None:
         agent = factory.build_agent(
             role="main", tools=tools, tool_guards=guard_map,
             system_prompt=system_prompt, ctx=ctx,
+            checkpointer=InMemorySaver(),
+            summarize={"trigger": ("fraction", 0.7), "keep": ("messages", 20)},
         )
     except KeyError as e:
         print(f"Error: cannot resolve the main model ({e}). Copy config/providers.example.json to config/providers.json and set your key in .env.")
@@ -191,7 +194,7 @@ def _boot(root: Path) -> None:
     io.register(TerminalBackend())
     io.send("Claw_SE started (Small + Security edition, single-file). "
             "Type a message, Ctrl+C to exit.")
-    messages = []
+    thread_id = {"configurable": {"thread_id": "main"}}
     while True:
         try:
             msg = io.receive()
@@ -199,15 +202,11 @@ def _boot(root: Path) -> None:
                 continue
             user_input = msg.text
             channel = msg.channel
-            messages.append(HumanMessage(content=user_input))
             logger.info("User: %s", user_input.replace("\n", "\\n"))
             io.send("\nAI: ", channel=channel)
-            response = agent.invoke({"messages": messages})
-            if isinstance(response, dict):
-                ai_response = response["messages"][-1].content
-                messages = response["messages"]
-            else:
-                ai_response = str(response)
+            response = agent.invoke(
+                {"messages": [HumanMessage(content=user_input)]}, config=thread_id)
+            ai_response = response["messages"][-1].content if isinstance(response, dict) else str(response)
             io.send(ai_response if isinstance(ai_response, str) else str(ai_response), channel=channel)
             io.send("", channel=channel)
             logger.info("AI: %s", str(ai_response).replace("\n", "\\n"))
@@ -244,7 +243,7 @@ def _src():
 
 def build(out):
     entry = _T.replace(_PLACE, "_PAYLOAD = " + json.dumps(_src(), ensure_ascii=False, indent=2))
-    entry = "\n".join(l for l in entry.splitlines() if l.strip())  # compact: no blank lines
+    entry = "\n".join(l for l in entry.splitlines() if l.strip())
     out.mkdir(parents=True, exist_ok=True)
     target = out / "claw_se.py"
     target.write_text(_BN + entry, encoding="utf-8")

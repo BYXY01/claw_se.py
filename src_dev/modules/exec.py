@@ -1,4 +1,4 @@
-"""Unified executor: foreground commands + background process management (ported from LC).
+"""Unified executor: foreground commands + background process management.
 
 - execute(command, operation, ...) is a single entry: run / start / input / stop / status / list.
 - run and start go through the security wrapper (guard_key="command"); additionally a
@@ -6,6 +6,8 @@
 - background `input` is intentionally NOT security-checked (fix #8): the user has already
   confirmed the target process when it was started.
 """
+import os
+import signal
 import subprocess
 import threading
 import time
@@ -14,6 +16,7 @@ from typing import Optional
 from langchain_core.tools import tool
 
 from .core import config as core_config
+from .core import env
 from .core.security import protected_dirs
 from .core.security.rules import self_dir_match
 
@@ -38,8 +41,7 @@ def _start_process(command: str) -> str:
     """
     global _next_pid
 
-    process = subprocess.Popen(
-        command,
+    kwargs = dict(
         shell=True,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -48,6 +50,15 @@ def _start_process(command: str) -> str:
         bufsize=1,
         universal_newlines=True,
     )
+    # start in its OWN process group/session so stop can signal the whole tree
+    # (with shell=True, Popen is only the shell; killing the shell alone would
+    #  orphan the actual command - that is why the group is required)
+    if env.IS_WIN:
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+
+    process = subprocess.Popen(command, **kwargs)
 
     pid = _next_pid
     _next_pid += 1
@@ -96,8 +107,25 @@ def _input_process(pid: int, input_text: str) -> str:
         return f"Error sending input: {e}"
 
 
+def _kill_tree(proc, force: bool) -> None:
+    """Signal the whole process tree (the shell AND its children).
+
+    With shell=True the Popen object is only the shell; signaling the shell alone
+    would orphan the actual command. Each background process runs in its own group
+    (see _start_process), so we signal the whole group:
+    - POSIX : os.killpg on the session created by start_new_session
+    - Windows: taskkill /T on the group created by CREATE_NEW_PROCESS_GROUP
+    """
+    if env.IS_WIN:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                       capture_output=True, check=False)
+        return
+    sig = signal.SIGKILL if force else signal.SIGTERM
+    os.killpg(os.getpgid(proc.pid), sig)
+
+
 def _stop_process(pid: int) -> str:
-    """Stop a background process.
+    """Stop a background process (the whole process tree).
 
     Args:
         pid: the internal PID.
@@ -108,14 +136,22 @@ def _stop_process(pid: int) -> str:
     if pid not in _processes:
         return f"Error: Process {pid} not found"
     info = _processes[pid]
+    proc = info["process"]
     try:
-        info["process"].terminate()
-        info["process"].wait(timeout=5)
+        _kill_tree(proc, force=False)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc, force=True)
+            proc.wait(timeout=5)
         info["status"] = "stopped"
         return f"Process {pid} stopped"
+    except ProcessLookupError:
+        info["status"] = "stopped"
+        return f"Process {pid} already exited"
     except Exception as e:
         try:
-            info["process"].kill()
+            _kill_tree(proc, force=True)
             info["status"] = "killed"
             return f"Process {pid} killed"
         except Exception:

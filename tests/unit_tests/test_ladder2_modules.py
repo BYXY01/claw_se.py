@@ -73,6 +73,34 @@ def test_exec_background_lifecycle(tmp_path, security_config):
     assert "stopped" in stop
 
 
+def test_exec_stop_kills_process_tree():
+    """stop must kill the whole shell tree, not just the shell (shell=True bug)."""
+    import os
+    import time
+    from modules.exec import _processes, _start_process, _stop_process
+
+    if os.name == "nt":
+        return  # POSIX process-group semantics; Windows uses taskkill /T
+
+    _processes.clear()
+    _start_process("sleep 200 & sleep 100")  # sh spawns two children
+    pid = max(_processes)
+    pgid = os.getpgid(_processes[pid]["process"].pid)
+    _stop_process(pid)
+    time.sleep(0.3)  # let the signals land
+
+    leftovers = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            if os.getpgid(int(entry)) == pgid:
+                leftovers.append(entry)
+        except (ProcessLookupError, PermissionError, OSError):
+            continue
+    assert leftovers == [], f"process tree not killed, leftovers: {leftovers}"
+
+
 # ---------------- file ----------------
 def test_file_write_read(tmp_path, security_config):
     from modules.file import file_op
