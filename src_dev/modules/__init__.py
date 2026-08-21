@@ -11,6 +11,10 @@ Each peripheral module (single `.py` under modules/) may declare a FEATURE dict:
         "guard_key": "command",        # security-judgment parameter name
     }
 
+Install-style plugins live under plugins/<id>/ (manifest.json + plugin.py) and are
+loaded through the same graded security checks - see modules/core/plugins.py.
+Their tools / guard_keys / channels are merged into the same shared pipelines.
+
 Rules:
 - modules/core/ is the kernel: always imported, cannot be disabled, never lent out.
 - Peripheral modules are enabled/disabled by config/modules.json (default enabled).
@@ -20,16 +24,25 @@ Rules:
 """
 import importlib
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
 from .core import config as core_config
+from .core.plugins import PluginLoader, LoadedPlugin
 from .core.security import ModuleTrust, validate_module
 
 logger = logging.getLogger("claw_se.modules")
 
 _MODULES_ROOT = Path(__file__).resolve().parent
 _APP_ROOT = _MODULES_ROOT.parent
+
+# Plugins live under modules/ as modules/<plugin_id>/ (manifest.json + plugin.py).
+_PLUGINS_ROOT = _MODULES_ROOT
+
+# Plugins loaded by the most recent discover(); collect_tools/collect_guard_map
+# merge their capabilities so callers keep one uniform pipeline.
+_PLUGINS: list[LoadedPlugin] = []
 
 
 def discover(security_config: Optional[dict] = None, strict: Optional[bool] = None,
@@ -82,11 +95,20 @@ def discover(security_config: Optional[dict] = None, strict: Optional[bool] = No
                 on_load()
             except Exception as e:  # noqa: BLE001 - hook failure must not break discovery
                 logger.error("module %s on_load failed: %s", name, e)
+
+    # install-style plugins (subdirs of modules/ with a manifest.json)
+    global _PLUGINS
+    _PLUGINS = []
+    loader = PluginLoader(_PLUGINS_ROOT, security_config, _APP_ROOT,
+                          strict=bool(strict), env=dict(os.environ))
+    _PLUGINS = [p for p in loader.load_all() if cfg.get(p.plugin_id, True)]
+    for plugin in _PLUGINS:
+        logger.info("plugin enabled: %s", plugin.plugin_id)
     return loaded
 
 
 def collect_tools(loaded: dict) -> list:
-    """Collect tool callables from loaded FEATURE dicts.
+    """Collect tool callables from loaded modules AND plugins.
 
     Args:
         loaded: mapping of module name -> loaded module.
@@ -103,11 +125,13 @@ def collect_tools(loaded: dict) -> list:
         for tool in feat.get("tools", []) or []:
             if hasattr(tool, "name") or callable(tool):
                 tools.append(tool)
+    from .core.plugins import collect_tools as collect_plugin_tools
+    tools += collect_plugin_tools(_PLUGINS)
     return tools
 
 
 def collect_guard_map(loaded: dict) -> dict[str, str]:
-    """Collect tool name -> guard_key mapping from FEATURE dicts.
+    """Collect tool name -> guard_key mapping from loaded modules AND plugins.
 
     Args:
         loaded: mapping of module name -> loaded module.
@@ -127,11 +151,13 @@ def collect_guard_map(loaded: dict) -> dict[str, str]:
             tname = getattr(tool, "name", None)
             if tname:
                 guard_map[tname] = gk
+    from .core.plugins import collect_guard_map as collect_plugin_guard_map
+    guard_map.update(collect_plugin_guard_map(_PLUGINS))
     return guard_map
 
 
 def collect_hooks(loaded: dict) -> dict:
-    """Collect lifecycle/extension hooks from loaded FEATURE dicts.
+    """Collect lifecycle/extension hooks from loaded modules AND plugins.
 
     Args:
         loaded: mapping of module name -> loaded module.
@@ -147,4 +173,17 @@ def collect_hooks(loaded: dict) -> dict:
         for hook_name, hook in (feat.get("hooks") or {}).items():
             if callable(hook):
                 hooks.setdefault(hook_name, []).append(hook)
+    for plugin in _PLUGINS:
+        for hook_name, hook in plugin.api.hooks():
+            if callable(hook):
+                hooks.setdefault(hook_name, []).append(hook)
     return hooks
+
+
+def wire_plugin_channels() -> None:
+    """Register channel capabilities of loaded plugins into the MsgIO bus."""
+    if not _PLUGINS:
+        return
+    from .core.msgio import get_io
+    from .core.plugins import wire_channels
+    wire_channels(_PLUGINS, register_channel=get_io().register)

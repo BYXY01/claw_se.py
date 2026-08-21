@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install langchain langchain-openai langchain-core python-dotenv psutil pytest
+          pip install -r requirements.txt pytest
 
       - name: Read version
         id: version
@@ -56,7 +56,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install langchain langchain-openai langchain-core python-dotenv psutil pyinstaller
+          pip install -r requirements.txt pyinstaller
 
       - name: Build single file + exe (PyInstaller onefile)
         run: python builder.py --exe --out dist

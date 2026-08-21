@@ -1,8 +1,10 @@
 """claw_se single-file builder (internal)."""
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parent
 SRC_DEV = ROOT / "src_dev"
@@ -12,14 +14,46 @@ _VERSION = (ROOT / "version.txt").read_text(encoding="utf-8").strip()
 _BN = f'#!/usr/bin/env python3\n# claw_se.py - claw_se (Small + Security edition) v{_VERSION} single-file build\n'
 _X = {".env"}
 
+# pip-name -> import-name for the runtime deps (only the ones that differ).
+_IMPORT_NAME = {
+    "langchain": "langchain",
+    "langchain-openai": "langchain_openai",
+    "langchain-core": "langchain_core",
+    "python-dotenv": "dotenv",
+    "psutil": "psutil",
+}
+
+
+def _core_deps():
+    """Read the runtime deps from requirements.txt (single source of truth).
+
+    Returns:
+        (pip_names, import_names) lists for the entry template.
+    """
+    req = ROOT / "requirements.txt"
+    if not req.exists():
+        raise FileNotFoundError("requirements.txt missing: it is the single dependency source")
+    pip_names: list[str] = []
+    import_names: list[str] = []
+    for line in req.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name = re.split(r"[<>=!~;]", line, maxsplit=1)[0].strip()
+        if not name:
+            continue
+        pip_names.append(name)
+        import_names.append(_IMPORT_NAME.get(name, name.replace("-", "_")))
+    return pip_names, import_names
+
 _H = r'''
 import os
 import subprocess
 import sys
 from pathlib import Path
 _PAYLOAD: dict[str, str] = {}
-_CORE_DEPS = ["langchain", "langchain-openai", "langchain-core", "python-dotenv", "psutil"]
-_CORE_IMPORTS = ["langchain", "langchain_openai", "langchain_core", "dotenv", "psutil"]
+_CORE_DEPS = __CORE_DEPS__
+_CORE_IMPORTS = __CORE_IMPORTS__
 _BANNER = "claw_se (Small + Security edition, single-file build)"
 _FALLBACK_PROMPT = (
     "You are a local AI assistant protected by a security layer. "
@@ -183,6 +217,7 @@ def _boot(root: Path) -> None:
     loaded = modules.discover(security_config)
     tools = modules.collect_tools(loaded)
     guard_map = modules.collect_guard_map(loaded)
+    modules.wire_plugin_channels()
     logger.info("loaded modules: %s", ", ".join(loaded.keys()))
     logger.info("registered tools: %s", ", ".join(getattr(t, "name", str(t)) for t in tools))
     if "delegate" in loaded:
@@ -257,7 +292,9 @@ def _src():
 
 
 def build(out):
+    deps, imports = _core_deps()
     entry = _T.replace(_PLACE, "_PAYLOAD = " + json.dumps(_src(), ensure_ascii=False, indent=2))
+    entry = entry.replace("__CORE_DEPS__", json.dumps(deps)).replace("__CORE_IMPORTS__", json.dumps(imports))
     entry = "\n".join(l for l in entry.splitlines() if l.strip())
     out.mkdir(parents=True, exist_ok=True)
     target = out / "claw_se.py"
@@ -266,40 +303,74 @@ def build(out):
     return target
 
 
-def _exe(f):
-    import importlib
+# Runtime deps imported LAZILY (inside functions / the boot loop) are not picked
+# up by PyInstaller's static scan, so they must be declared for the frozen
+# builds (exe / unix binary) or they break at runtime (process-kill needs psutil,
+# the boot loop needs langgraph.checkpoint.memory).
+_HIDDEN_IMPORTS = [
+    "langchain_openai",
+    "langchain_core",
+    "psutil",
+    "langgraph",
+    "langgraph.checkpoint.memory",
+]
+
+
+def _pyinstaller(name: str, f, extra: Optional[list[str]] = None):
+    """Run PyInstaller onefile for a frozen build.
+
+    Args:
+        name: the output binary name.
+        f: the single-file claw_se.py to freeze.
+        extra: extra CLI args.
+
+    Returns:
+        False when PyInstaller is unavailable.
+    """
     import subprocess
     try:
+        import importlib
         importlib.import_module("PyInstaller")
     except ImportError:
-        print("[builder] PyInstaller not installed; skipping claw_se.exe")
+        print("[builder] PyInstaller not installed; skipping frozen build")
         return False
-    # Runtime deps that are imported LAZILY (inside functions / the boot loop) are
-    # not picked up by PyInstaller's static scan, so they must be declared here or
-    # the exe breaks at runtime (e.g. process-kill needs psutil, the boot loop
-    # needs langgraph.checkpoint.memory). Executable deps are auto-detected.
-    hidden_imports = [
-        "langchain_openai",
-        "langchain_core",
-        "psutil",
-        "langgraph",
-        "langgraph.checkpoint.memory",
-    ]
-    args = [sys.executable, "-m", "PyInstaller", "--onefile", "--console",
-            "--name", "claw_se"]
-    for mod in hidden_imports:
+    args = [sys.executable, "-m", "PyInstaller", "--onefile", "--console", "--name", name]
+    for mod in _HIDDEN_IMPORTS:
         args += ["--hidden-import", mod]
+    if extra:
+        args += extra
     args.append(str(f))
     subprocess.check_call(args)
     return True
+
+
+def _exe(f):
+    """Build claw_se.exe (Windows onefile)."""
+    return _pyinstaller("claw_se", f)
+
+
+def _unix_bin(f):
+    """EXPERIMENTAL: build a native Unix (Linux/macOS) binary via PyInstaller onefile.
+
+    Not wired into CI - a manual, best-effort option.
+    """
+    if sys.platform.startswith("win"):
+        print("[builder] --unix-bin requires a Unix host (Linux/macOS); skipping")
+        return False
+    print("[builder] EXPERIMENTAL: building native unix binary (Linux/macOS)")
+    return _pyinstaller("claw_se", f)
 
 
 if __name__ == "__main__":
     import argparse as _a
     ap = _a.ArgumentParser()
     ap.add_argument("--exe", action="store_true")
+    ap.add_argument("--unix-bin", action="store_true",
+                    help="EXPERIMENTAL: also build a native Linux/macOS binary (not in CI)")
     ap.add_argument("--out", type=Path, default=None)
     a = ap.parse_args()
     f = build(a.out or Path.cwd())
     if a.exe:
         _exe(f)
+    if a.unix_bin:
+        _unix_bin(f)

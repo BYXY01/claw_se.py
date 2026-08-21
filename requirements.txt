@@ -1,0 +1,9 @@
+# claw_se core runtime dependencies (single source of truth).
+# builder.py reads this to embed the runtime dep list into the single file;
+# CI/tests install from here. Extra build/test-only tools (pytest, pyflakes,
+# pyinstaller) are installed separately by CI.
+langchain
+langchain-openai
+langchain-core
+python-dotenv
+psutil

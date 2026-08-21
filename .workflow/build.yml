@@ -1,0 +1,61 @@
+version: "1.0"
+name: claw-se-ci
+displayName: claw_se CI
+stages:
+- name: stage-build
+  displayName: 构建
+  strategy: naturally
+  trigger: auto
+  executor: []
+  steps:
+  - step: build@python
+    name: build_python
+    displayName: Python 构建
+    pythonVersion: "3.11"
+    commands:
+    - pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+    - pip install -r requirements.txt pytest pyflakes
+    - python -m pyflakes src_dev tests builder.py
+    - python -m pytest tests/unit_tests -q
+    - python builder.py --out .
+    - VER=$(cat version.txt) && echo "VER=$VER" >> GITEE_PARAMS
+    artifacts:
+    - name: CLAW_RELEASE
+      path:
+      - claw_se.py
+    notify: []
+    strategy:
+      retry: '0'
+- name: stage-release
+  displayName: 发版
+  strategy: naturally
+  trigger: auto
+  executor: []
+  steps:
+  - step: release@gitee
+    name: release_gitee
+    displayName: Gitee Release
+    releaseName: ${VER}
+    description: |
+      Auto-built by Gitee Go.
+
+      - `claw_se.py` - single-file Python distribution (all platforms)
+    tagName: ${VER}
+    upstreamArtifact:
+    - CLAW_RELEASE
+    assertFiles:
+    - claw_se.py
+    prerelease: true
+    allowUpdate: true
+    notify: []
+    strategy:
+      retry: '0'
+triggers:
+  trigger: auto
+  push:
+    branches:
+      include:
+      - main
+notify: []
+strategy:
+  blocking: true
