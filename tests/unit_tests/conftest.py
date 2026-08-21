@@ -28,21 +28,41 @@ class ToolCallingFake:
 
 
 def make_security_config(tmp_path: Path) -> dict:
-    """Build a security config dict whose data files live under tmp_path."""
-    data_dir = tmp_path / "security_data"
+    """Build a security config dict (tunables only; list paths are hardcoded)."""
     return {
         "firewall": "on",
         "detect": "off",
         "input_detect": "off",
         "review_on_block": False,
         "override_threshold": 3,
-        "blacklist_file": str(data_dir / "blacklist.json"),
-        "whitelist_file": str(data_dir / "whitelist.json"),
-        "asklist_file": str(data_dir / "asklist.json"),
-        "overrides_file": str(data_dir / "overrides.json"),
-        "module_trust_file": str(data_dir / "module_trust.json"),
         "version": "v1",
     }
+
+
+def make_providers_config() -> dict:
+    """A test model catalog (provider/model/key_ref) for factory resolution."""
+    return {
+        "providers": {
+            "deepseek": {
+                "api_base": "https://api.deepseek.com/v1",
+                "models": {
+                    "main": {"model": "deepseek-chat", "key_ref": "DEEPSEEK_API_KEY", "ctx": 8192},
+                    "judge": {"model": "deepseek-chat", "key_ref": "DEEPSEEK_API_KEY", "ctx": 8192},
+                },
+            },
+        },
+        "role_map": {
+            "main": "deepseek.main",
+            "judge": "deepseek.judge",
+            "delegate": "deepseek.main",
+        },
+    }
+
+
+@pytest.fixture
+def providers_config() -> dict:
+    """A test model catalog for factory resolution."""
+    return make_providers_config()
 
 
 @pytest.fixture

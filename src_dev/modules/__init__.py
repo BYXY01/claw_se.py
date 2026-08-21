@@ -32,19 +32,21 @@ _MODULES_ROOT = Path(__file__).resolve().parent
 _APP_ROOT = _MODULES_ROOT.parent
 
 
-def discover(security_config: Optional[dict] = None, strict: Optional[bool] = None) -> dict:
+def discover(security_config: Optional[dict] = None, strict: Optional[bool] = None,
+             trust_path: Optional[Path] = None) -> dict:
     """Discover and load core + enabled peripheral modules (with security checks).
 
     Args:
         security_config: dict from config/security.json; loaded when None.
         strict: module-check mode override (True=validate all, False=only new modules).
+        trust_path: module_trust.json path; defaults to the hardcoded
+            modules/core/security/data/module_trust.json under the app root.
 
     Returns:
         dict mapping module name -> loaded module object (peripheral only; core is infrastructure).
     """
     security_config = security_config if security_config is not None else core_config.load_security_config()
-    trust_path = _APP_ROOT / security_config.get("module_trust_file", "modules/core/security/data/module_trust.json")
-    trust = ModuleTrust(trust_path)
+    trust = ModuleTrust(trust_path or (_APP_ROOT / "modules/core/security/data/module_trust.json"))
 
     # forced: kernel import (always loads, cannot be disabled)
     importlib.import_module("modules.core")

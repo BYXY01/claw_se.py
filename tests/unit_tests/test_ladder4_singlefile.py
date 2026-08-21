@@ -34,7 +34,7 @@ def test_builder_excludes_secrets_and_dev_entry(tmp_path):
     # no top-level (src_dev-root) entry scripts are shipped
     assert not any("/" not in rel and rel.endswith(".py") for rel in payload)
     assert "modules/core/factory.py" in payload
-    assert "config/security.json" in payload
+    assert "config/providers.example.json" in payload
     assert "prompt_library/IDENTITY.md" in payload
 
 
@@ -43,7 +43,7 @@ def test_single_file_self_release_and_user_data_not_overwritten(tmp_path):
     release_root = tmp_path / "home"
     c.self_release(release_root)
     assert (release_root / "modules/core/security/rules.py").exists()
-    assert (release_root / "config/security.json").exists()
+    assert (release_root / "config/providers.example.json").exists()
     assert (release_root / "prompt_library/IDENTITY.md").exists()
     # user data (config/prompt) is never overwritten on a second run
     target = release_root / "prompt_library" / "IDENTITY.md"

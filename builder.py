@@ -153,6 +153,7 @@ def _boot(root: Path) -> None:
     logger = logging.getLogger("Claw_SE.boot")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     _ensure_genuine_run(modules)
+    core_config.ensure_config_files(root)  # auto-generate modules.json + security.json
     core_config.load_env()
     security_config = core_config.load_security_config()
     judge = None
@@ -183,7 +184,7 @@ def _boot(root: Path) -> None:
             system_prompt=system_prompt, ctx=ctx,
         )
     except KeyError as e:
-        print(f"Error: cannot resolve the main model ({e}). Check config/providers.json and .env.")
+        print(f"Error: cannot resolve the main model ({e}). Copy config/providers.example.json to config/providers.json and set your key in .env.")
         sys.exit(1)
     io = get_io()
     io.set_input_guard(guard)

@@ -61,19 +61,41 @@ def load_modules_config(root: Path | None = None) -> dict:
     path = (root or app_root()) / "config" / "modules.json"
     data = _read_json(path, {})
     modules = data.get("modules", {})
-    return modules if isinstance(modules, dict) else {}
+    return modules if isinstance(modules, dict) and modules else dict(_MODULES_DEFAULT)
 
 
 def load_security_config(root: Path | None = None) -> dict:
-    """Load security config: dual switches / detection mode / list file paths / default keywords."""
+    """Load security config: dual switches / detection mode / list file paths."""
     path = (root or app_root()) / "config" / "security.json"
     return _read_json(path, _SECURITY_DEFAULTS)
 
 
 def load_providers_config(root: Path | None = None) -> dict:
-    """Load the model catalog: providers + role_map."""
+    """Load the model catalog: providers + role_map (user-configured, no default)."""
     path = (root or app_root()) / "config" / "providers.json"
-    return _read_json(path, {"providers": {}, "role_map": {}})
+    data = _read_json(path, {})
+    return data if isinstance(data, dict) else {}
+
+
+def ensure_config_files(root: Path | None = None) -> None:
+    """Generate the real config/*.json with safe defaults on first boot.
+
+    Only modules.json and security.json have sensible code defaults. providers.json
+    is the USER's choice (provider/model/key_ref) - it is NOT auto-generated; the
+    user copies config/providers.example.json and fills it in. Existing files
+    (user-edited) are never overwritten.
+    """
+    target = (root or app_root()) / "config"
+    target.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "modules.json": {"modules": _MODULES_DEFAULT},
+        "security.json": _SECURITY_DEFAULTS,
+    }
+    for name, data in payload.items():
+        path = target / name
+        if path.exists():
+            continue
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 _SECURITY_DEFAULTS: dict = {
@@ -84,10 +106,14 @@ _SECURITY_DEFAULTS: dict = {
     "judge_max_retries": 1,
     "review_on_block": False,       # whether a blacklist hit can be reviewed once (fix #6)
     "override_threshold": 3,        # same command allowed-once N times -> prompt to whitelist
-    "blacklist_file": "modules/core/security/data/blacklist.json",
-    "whitelist_file": "modules/core/security/data/whitelist.json",
-    "asklist_file": "modules/core/security/data/asklist.json",
-    "overrides_file": "modules/core/security/data/overrides.json",
-    "module_trust_file": "modules/core/security/data/module_trust.json",
+    "module_check": "normal",       # module-load check mode: normal/strict
     "version": "v1",
+}
+
+_MODULES_DEFAULT: dict = {
+    "exec": True,
+    "file": True,
+    "info": True,
+    "delegate": True,
+    "memory": False,
 }

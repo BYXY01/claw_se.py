@@ -35,6 +35,18 @@ logger = logging.getLogger("Claw_SE.security.store")
 KEYWORD_LISTS = ("blacklist", "self", "learned", "whitelist", "asklist")
 OVERRIDES_LIST = "overrides"
 
+# List file paths are an internal implementation detail of the security kernel:
+# hardcoded here (relative to the app root), NOT user config.
+_LIST_DATA_DIR = "modules/core/security/data"
+_LIST_FILES = {
+    "blacklist": "blacklist.json",
+    "self": "blacklist.json",   # shares the blacklist file
+    "learned": "blacklist.json",
+    "whitelist": "whitelist.json",
+    "asklist": "asklist.json",
+    "overrides": "overrides.json",
+}
+
 # Known-dangerous command baseline seeded into the static blacklist on FIRST load
 # only. This makes switch A (static firewall, 0 token) effective from the very
 # first run without ever needing the LLM/judge to "learn" these first. Existing
@@ -69,8 +81,8 @@ class Store:
     """List persistence: memory cache + write-through + RLock + atomic write.
 
     Args:
-        security_config: dict from config/security.json (with relative list paths).
-        app_root: dev body root (src_dev/), used to resolve relative list paths.
+        security_config: dict from config/security.json (only used for version).
+        app_root: app root (src_dev/ or the release root); list files live under it.
     """
 
     def __init__(self, security_config: dict, app_root: Path):
@@ -87,32 +99,15 @@ class Store:
         }
         self._load_all()
 
-    # ---- path resolution ----
-    def _resolve(self, key: str) -> Path:
-        rel = self._cfg.get(key, "")
-        path = Path(rel).expanduser() if rel else Path()
-        if not path.is_absolute():
-            path = self._root / path
-        return path
-
     def blacklist_path(self) -> Path:
         """Path of the blacklist file (holds keywords/self/learned)."""
-        return self._resolve("blacklist_file")
+        return self._root / _LIST_DATA_DIR / "blacklist.json"
 
     def _file_for(self, name: str) -> Optional[Path]:
-        mapping = {
-            "blacklist": "blacklist_file",
-            "self": "blacklist_file",
-            "learned": "blacklist_file",
-            "whitelist": "whitelist_file",
-            "asklist": "asklist_file",
-            "overrides": "overrides_file",
-        }
-        key = mapping.get(name)
-        # a missing config key means "no dedicated file" -> None (never resolve to a dir)
-        if not key or not self._cfg.get(key):
+        filename = _LIST_FILES.get(name)
+        if not filename:
             return None
-        return self._resolve(key)
+        return self._root / _LIST_DATA_DIR / filename
 
     # ---- initial load (one-shot) ----
     def _load_all(self) -> None:

@@ -19,8 +19,7 @@ def make_ctx(security_config, app_root):
 
 # ---------------- discovery ----------------
 def test_discover_delegate_enabled_memory_off(tmp_path, security_config):
-    security_config["module_trust_file"] = str(tmp_path / "module_trust.json")
-    loaded = modules.discover(security_config)
+    loaded = modules.discover(security_config, trust_path=tmp_path / "module_trust.json")
     assert "delegate" in loaded
     assert "memory" not in loaded  # default off (opt-in)
     names = {getattr(t, "name", None) for t in modules.collect_tools(loaded)}
@@ -157,7 +156,7 @@ def test_sub_agent_tools_least_privilege(tmp_path, security_config, monkeypatch)
     assert set(captured["guards"]) == {"read_file"}  # guards follow the shared subset
 
 
-def test_sub_agent_secure_injection(tmp_path, security_config, monkeypatch):
+def test_sub_agent_secure_injection(tmp_path, security_config, monkeypatch, providers_config):
     """Every shared tool is secured before the sub-agent gets it (fix #11)."""
     ctx = make_ctx(security_config, tmp_path)
 
@@ -175,6 +174,8 @@ def test_sub_agent_secure_injection(tmp_path, security_config, monkeypatch):
     monkeypatch.setattr(factory_mod, "create_agent", fake_create_agent)
     monkeypatch.setattr(factory_mod, "build_chat_model",
                         lambda provider, spec, temperature=None: None)
+    monkeypatch.setattr(factory_mod.core_config, "load_providers_config",
+                        lambda: providers_config)
 
     factory_mod.build_agent(role="delegate", tools=[read_file],
                             tool_guards={"read_file": "path"},

@@ -3,7 +3,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 
-from conftest import ToolCallingFake
+from conftest import SRC_DEV, ToolCallingFake
 from modules.core import config as core_config
 from modules.core.msgio import Msg, MsgBackend, MsgIO, get_io
 from modules.core.security.input_guard import InputGuard
@@ -78,14 +78,14 @@ def test_config_files_are_loaded():
     assert modules_cfg.get("memory") is False
     sec = core_config.load_security_config()
     assert sec.get("firewall") == "on"
+    # providers is user-configured: no file in src_dev -> empty; only example shipped
     prov = core_config.load_providers_config()
-    assert "role_map" in prov
-    assert prov["role_map"]["main"] == "deepseek.main"
+    assert prov == {}
+    assert (SRC_DEV / "config" / "providers.example.json").exists()
 
 
 def test_discover_loads_enabled_modules(tmp_path, security_config):
-    security_config["module_trust_file"] = str(tmp_path / "module_trust.json")
-    loaded = __import__("modules").discover(security_config)
+    loaded = __import__("modules").discover(security_config, trust_path=tmp_path / "module_trust.json")
     names = set(loaded.keys())
     assert {"exec", "file", "info", "delegate"} <= names
     assert "memory" not in names  # disabled (opt-in per design decision Q5)
@@ -93,8 +93,7 @@ def test_discover_loads_enabled_modules(tmp_path, security_config):
 
 def test_collect_tools_and_guard_map(tmp_path, security_config):
     import modules
-    security_config["module_trust_file"] = str(tmp_path / "module_trust.json")
-    loaded = modules.discover(security_config)
+    loaded = modules.discover(security_config, trust_path=tmp_path / "module_trust.json")
     tools = modules.collect_tools(loaded)
     names = {getattr(t, "name", None) for t in tools}
     assert {"execute", "file_op", "get_info"} <= names
@@ -123,7 +122,7 @@ def test_empty_agent_loop_with_secured_tool(tmp_path, security_config):
     assert result["messages"][-1].content == "all good"
 
 
-def test_factory_build_agent_via_monkeypatch(tmp_path, security_config, monkeypatch):
+def test_factory_build_agent_via_monkeypatch(tmp_path, security_config, monkeypatch, providers_config):
     """factory.build_agent works and injects security (ChatOpenAI patched out)."""
     from modules.core import factory
 
@@ -131,6 +130,7 @@ def test_factory_build_agent_via_monkeypatch(tmp_path, security_config, monkeypa
         return ToolCallingFake(["secure reply"])
 
     monkeypatch.setattr(factory, "build_chat_model", fake_build_chat_model)
+    monkeypatch.setattr(factory.core_config, "load_providers_config", lambda: providers_config)
 
     store = Store(security_config, tmp_path)
     from modules.core.security import protected_dirs
