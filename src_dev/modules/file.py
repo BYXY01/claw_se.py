@@ -1,14 +1,15 @@
-"""File operations tool (fixes #10/#13 applied).
+"""File operations - one stateless entry point (agent-friendly).
 
-- Quick mode: file_op("path", "read"/"write"/"append").
-- Handle mode: file_op("path", "open", mode=...) -> file_op(handle, ...) -> file_op(handle, "close").
-- Fix #10: before any write/append the existing file is backed up to `<path>.bak`;
-  a failed write rolls the file back automatically, and a "rollback" operation
-  restores the last backup manually.
-- Fix #13: write/append/rollback targeting a `.py` under the protected dirs
-  (modules/, src_dev/) is blocked by the self-directory guard.
+- read  : read a file (optional line window via offset/limit, keeps context small).
+- write : overwrite with `.bak` backup + auto-rollback (fix #10).
+- append: append with `.bak` backup + auto-rollback (fix #10).
+- rollback: restore the last `.bak` manually.
+- info  : report size / line count so the agent can gauge before reading.
+
+No stateful handle mode (no open/close/handle ids) - the LLM manages nothing
+across calls. Fix #13: write/append/rollback targeting a `.py` under the
+protected dirs (modules/, src_dev/) is blocked by the self-directory guard.
 """
-import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -18,10 +19,6 @@ from langchain_core.tools import tool
 from .core import config as core_config
 from .core.security import protected_dirs
 from .core.security.rules import is_protected_path
-
-# file handle registry
-_file_handles: dict[str, dict] = {}
-_next_handle_id: int = 1
 
 _BACKUP_SUFFIX = ".bak"
 
@@ -82,141 +79,94 @@ def _safe_write(path: str, content: str, mode: str = "w") -> str:
 
 
 @tool
-def file_op(
-    path_or_handle: str,
-    operation: str,
-    mode: str = "r",
-    content: str = None,
-    pos: int = None,
-    size: int = None,
-    encoding: str = "utf-8",
-    insert: bool = False,
-) -> str:
-    """File operations tool.
-
-    Two modes:
-    1. Quick mode: file_op("path", "read" / "write" / "append")
-    2. Handle mode: file_op("path", "open", mode="r") -> file_op(handle, "read") -> file_op(handle, "close")
-
-    Writes are backed up to `<path>.bak` first and auto-rollback on failure;
-    use operation='rollback' to restore manually (fix #10).
+def file_op(path: str, operation: str = "read", content: str = None,
+            offset: int = 0, limit: Optional[int] = None,
+            start_line: Optional[int] = None, end_line: Optional[int] = None) -> str:
+    """File operations: read / write / append / replace / rollback / info (stateless).
 
     Args:
-        path_or_handle: file path or handle ID.
-        operation: open/close/read/write/append/seek/tell/flush/list/rollback.
-        mode: open mode.
-        content: content to write.
-        pos: seek position.
-        size: number of bytes to read.
-        encoding: file encoding, default utf-8.
-        insert: whether to insert at the current position (handle write).
+        path: file path.
+        operation: 'read' (default, with offset/limit line window),
+            'write', 'append', 'replace', 'rollback', or 'info'.
+        content: content for write/append/replace.
+        offset: 0-based line to start reading from (read only).
+        limit: max lines to return (read only; default all).
+        start_line: 1-based first line to replace (replace only).
+        end_line: 1-based last line to replace (replace only; default = start_line).
 
     Returns:
-        File content or a status/error message.
+        File content / file info / a status or error message.
     """
-    global _next_handle_id
-
     try:
-        is_handle = path_or_handle.startswith("file_") and path_or_handle[5:].isdigit()
+        if operation == "read":
+            if offset < 0:
+                return "Error: offset must be >= 0"
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            window = lines[offset:]
+            if limit is not None and limit >= 0:
+                window = window[:limit]
+            return "".join(window) or "(empty)"
 
-        # quick mode: direct path operations
-        if not is_handle and operation in ("read", "write", "append", "rollback"):
-            path = path_or_handle
-            if operation == "read":
-                if not os.path.exists(path):
-                    return f"Error: File '{path}' not found"
-                with open(path, "r", encoding=encoding) as f:
-                    return f.read()
-            elif operation == "write":
-                if content is None:
-                    return "Error: 'content' parameter required for write operation"
-                return _safe_write(path, content, "w")
-            elif operation == "append":
-                if content is None:
-                    return "Error: 'content' parameter required for append operation"
-                return _safe_write(path, content, "a")
-            elif operation == "rollback":
-                guard = _guard_target(path)
-                if guard:
-                    return guard
-                return _rollback_file(path)
-
-        # handle mode
-        if operation == "open":
-            path = path_or_handle
-            if path in _file_handles:
-                return f"File already open: {path}"
-            guard = _guard_target(path)
-            if guard and ("w" in mode or "a" in mode or "+" in mode):
-                return guard
-            file_obj = open(path, mode or "r", encoding=encoding)
-            handle_id = f"file_{_next_handle_id}"
-            _next_handle_id += 1
-            _file_handles[handle_id] = {"file": file_obj, "path": path, "mode": mode}
-            return f"File opened with handle: {handle_id} | Path: {path} | Mode: {mode}"
-
-        handle_id = path_or_handle
-        if handle_id not in _file_handles:
-            return f"Handle not found: {handle_id}"
-        file_obj = _file_handles[handle_id]["file"]
-        path = _file_handles[handle_id]["path"]
-
-        if operation == "close":
-            file_obj.close()
-            del _file_handles[handle_id]
-            return f"File closed: {handle_id}"
-        elif operation == "read":
-            return file_obj.read(size) if size else file_obj.read()
-        elif operation == "write":
+        if operation == "write":
             if content is None:
-                return "Error: 'content' parameter required for write operation"
+                return "Error: 'content' parameter required for write"
+            return _safe_write(path, content, "w")
+
+        if operation == "append":
+            if content is None:
+                return "Error: 'content' parameter required for append"
+            return _safe_write(path, content, "a")
+
+        if operation == "replace":
+            if content is None:
+                return "Error: 'content' parameter required for replace"
+            if start_line is None or start_line < 1:
+                return "Error: 'start_line' (1-based) required for replace"
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            end = end_line if end_line is not None else start_line
+            if end < start_line or end > len(lines):
+                return f"Error: invalid line range {start_line}-{end} (file has {len(lines)} lines)"
             guard = _guard_target(path)
             if guard:
                 return guard
             _backup_file(path)
             try:
-                if insert:
-                    current_pos = file_obj.tell()
-                    remaining = file_obj.read()
-                    file_obj.seek(current_pos)
-                    file_obj.write(content + remaining)
-                else:
-                    file_obj.write(content)
-                file_obj.flush()
-                return f"Written to {handle_id}"
+                replacement = content if content.endswith("\n") else content + "\n"
+                new_lines = lines[:start_line - 1] + [replacement] + lines[end:]
+                with open(path, "w", encoding="utf-8") as f:
+                    f.writelines(new_lines)
+                return f"Replaced lines {start_line}-{end} in '{path}'"
             except OSError as e:
                 _rollback_file(path)
-                return f"Error writing {handle_id}: {e}; rolled back from backup"
-        elif operation == "seek":
-            if pos is None:
-                return "Error: 'pos' parameter required for seek operation"
-            file_obj.seek(pos)
-            return f"Seeked to position {pos} in {handle_id}"
-        elif operation == "tell":
-            return f"Current position in {handle_id}: {file_obj.tell()}"
-        elif operation == "flush":
-            file_obj.flush()
-            return f"Flushed {handle_id}"
-        elif operation == "list":
-            lines = []
-            for hid, info in _file_handles.items():
-                lines.append(f"Handle: {hid} | Path: {info['path']} | Mode: {info['mode']}")
-            return "Open files:\n" + "\n".join(lines) if lines else "No open files"
-        else:
-            return (
-                f"Error: Unknown operation '{operation}'. "
-                f"Supported: open, close, read, write, append, seek, tell, flush, list, rollback"
-            )
+                return f"Error replacing in '{path}': {e}; rolled back"
 
-    except Exception as e:
+        if operation == "rollback":
+            guard = _guard_target(path)
+            if guard:
+                return guard
+            return _rollback_file(path)
+
+        if operation == "info":
+            p = Path(path)
+            stat = p.stat()
+            with open(path, "r", encoding="utf-8") as f:
+                lines = sum(1 for _ in f)
+            return f"Path: {path} | Size: {stat.st_size} bytes | Lines: {lines}"
+
+        return f"Error: Unknown operation '{operation}'. Supported: read, write, append, replace, rollback, info"
+    except FileNotFoundError:
+        return f"Error: File '{path}' not found"
+    except OSError as e:
         return f"Error: {e}"
 
 
 FEATURE = {
     "name": "file",
-    "version": "0.1",
-    "desc": "File operations: read/write/append with .bak backup + rollback",
+    "version": "0.2.0",
+    "desc": "File operations: read (line window)/write/append/replace with .bak + rollback",
     "tools": [file_op],
     "hooks": {},
-    "guard_key": "path_or_handle",
+    "guard_key": "path",
 }

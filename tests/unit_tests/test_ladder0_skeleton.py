@@ -99,7 +99,7 @@ def test_collect_tools_and_guard_map(tmp_path, security_config):
     assert {"execute", "file_op", "get_info"} <= names
     guard_map = modules.collect_guard_map(loaded)
     assert guard_map["execute"] == "command"
-    assert guard_map["file_op"] == "path_or_handle"
+    assert guard_map["file_op"] == "path"
 
 
 def test_empty_agent_loop_with_secured_tool(tmp_path, security_config):

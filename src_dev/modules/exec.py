@@ -6,8 +6,6 @@
 - background `input` is intentionally NOT security-checked (fix #8): the user has already
   confirmed the target process when it was started.
 """
-import os
-import signal
 import subprocess
 import threading
 import time
@@ -108,20 +106,25 @@ def _input_process(pid: int, input_text: str) -> str:
 
 
 def _kill_tree(proc, force: bool) -> None:
-    """Signal the whole process tree (the shell AND its children).
+    """Signal the whole process tree (the shell AND its children) via psutil.
 
     With shell=True the Popen object is only the shell; signaling the shell alone
-    would orphan the actual command. Each background process runs in its own group
-    (see _start_process), so we signal the whole group:
-    - POSIX : os.killpg on the session created by start_new_session
-    - Windows: taskkill /T on the group created by CREATE_NEW_PROCESS_GROUP
+    would orphan the actual command. psutil walks the real parent/child tree
+    (children(recursive=True) + parent) on every platform - one unified path,
+    native API, no subprocess command.
     """
-    if env.IS_WIN:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                       capture_output=True, check=False)
-        return
-    sig = signal.SIGKILL if force else signal.SIGTERM
-    os.killpg(os.getpgid(proc.pid), sig)
+    import psutil
+    sig = psutil.signal.SIGKILL if force else psutil.signal.SIGTERM
+    try:
+        p = psutil.Process(proc.pid)
+        for child in p.children(recursive=True):
+            try:
+                child.send_signal(sig)
+            except psutil.NoSuchProcess:
+                continue
+        p.send_signal(sig)
+    except psutil.NoSuchProcess:
+        raise ProcessLookupError(f"process {proc.pid} already gone")
 
 
 def _stop_process(pid: int) -> str:
@@ -282,7 +285,7 @@ def execute(command: str = "", operation: str = "run", pid: Optional[int] = None
 
 FEATURE = {
     "name": "exec",
-    "version": "0.1",
+    "version": "0.1.1",
     "desc": "Unified executor: foreground command + background process management",
     "tools": [execute],
     "hooks": {},

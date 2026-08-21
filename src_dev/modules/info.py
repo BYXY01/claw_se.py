@@ -6,6 +6,12 @@ import sys
 from langchain_core.tools import tool
 
 
+def _single_file_version() -> str:
+    """The running single file's version (`version` on __main__), if any."""
+    main = sys.modules.get("__main__")
+    return getattr(main, "version", "unknown") if main is not None else "unknown"
+
+
 @tool
 def get_info() -> str:
     """Get current system environment and program info (AI self-cognition).
@@ -14,6 +20,7 @@ def get_info() -> str:
         Multi-line key: value listing.
     """
     info = {
+        "claw_se_version": _single_file_version(),
         "system": platform.system(),
         "release": platform.release(),
         "machine": platform.machine(),
